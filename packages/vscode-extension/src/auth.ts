@@ -25,7 +25,7 @@ export class AuthManager {
   /** Browser OAuth login — same flow as the CLI. */
   async login(): Promise<boolean> {
     const config = vscode.workspace.getConfiguration("remb");
-    const baseUrl = (config.get<string>("apiUrl") ?? "http://localhost:3000").replace(/\/+$/, "");
+    const baseUrl = (config.get<string>("apiUrl") ?? "https://useremb.com").replace(/\/+$/, "");
 
     // Start OAuth session
     let state: string;

@@ -5,7 +5,7 @@ import { success, error, info, keyValue } from "../lib/output.js";
 import { findProjectConfig } from "../lib/config.js";
 import { confirmAction } from "../lib/shared.js";
 
-const DEFAULT_API_URL = "http://localhost:3000";
+const DEFAULT_API_URL = "https://useremb.com";
 
 function getBaseUrl(): string {
   const projectConfig = findProjectConfig();

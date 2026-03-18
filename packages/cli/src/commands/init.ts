@@ -314,7 +314,7 @@ All commands respect the \`-p/--project <slug>\` flag or fall back to \`.remb.ym
 export const initCommand = new Command("init")
   .description("Initialize a project with remb tracking")
   .argument("[project-name]", "Project name (defaults to directory name)")
-  .option("--api-url <url>", "API server URL", "http://localhost:3000")
+  .option("--api-url <url>", "API server URL", "https://useremb.com")
   .option("--force", "Overwrite existing configuration", false)
   .option(
     "--ide <ide>",

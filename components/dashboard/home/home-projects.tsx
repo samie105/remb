@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { motion } from "framer-motion";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
@@ -20,6 +21,44 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { item, timeAgo } from "./shared";
 import type { ProjectWithCounts } from "@/lib/project-actions";
+
+function getFaviconUrl(websiteUrl: string): string {
+  try {
+    const { hostname } = new URL(websiteUrl);
+    return `https://www.google.com/s2/favicons?domain=${hostname}&sz=64`;
+  } catch {
+    return "";
+  }
+}
+
+function ProjectAvatar({ project }: { project: ProjectWithCounts }) {
+  const [imgError, setImgError] = React.useState(false);
+  const faviconUrl = project.website_url && !imgError ? getFaviconUrl(project.website_url) : "";
+
+  if (faviconUrl) {
+    return (
+      <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted/50 overflow-hidden">
+        <Image
+          src={faviconUrl}
+          alt={project.name}
+          width={32}
+          height={32}
+          className="size-8 object-contain"
+          onError={() => setImgError(true)}
+          unoptimized
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted/50 text-foreground">
+      <span className="text-xs font-semibold">
+        {project.name.charAt(0).toUpperCase()}
+      </span>
+    </div>
+  );
+}
 
 interface HomeProjectsProps {
   projects: ProjectWithCounts[];
@@ -65,11 +104,7 @@ export function HomeProjects({ projects }: HomeProjectsProps) {
               {projects.slice(0, 5).map((project) => (
                 <Link key={project.id} href={`/dashboard/${project.slug}`}>
                   <div className="group flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors duration-200 hover:bg-muted/30">
-                    <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted/50 text-foreground">
-                      <span className="text-xs font-semibold">
-                        {project.name.charAt(0).toUpperCase()}
-                      </span>
-                    </div>
+                    <ProjectAvatar project={project} />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <h3 className="text-[13px] font-medium text-foreground truncate">

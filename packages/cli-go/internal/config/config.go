@@ -9,7 +9,7 @@ import (
 )
 
 const ConfigFilename = ".remb.yml"
-const DefaultAPIURL = "https://remb.vercel.app"
+const DefaultAPIURL = "https://useremb.com"
 
 type ProjectConfig struct {
 	Project string

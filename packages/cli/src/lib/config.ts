@@ -9,7 +9,7 @@ export interface ProjectConfig {
   ide?: string;
 }
 
-const DEFAULT_API_URL = "http://localhost:3000";
+const DEFAULT_API_URL = "https://useremb.com";
 
 /**
  * Walk up from `cwd` looking for .remb.yml.

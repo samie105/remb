@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Image from "next/image";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { HugeiconsIcon } from "@hugeicons/react";
@@ -84,6 +85,43 @@ function timeAgo(iso: string): string {
   if (hrs < 24) return `${hrs}h ago`;
   const days = Math.floor(hrs / 24);
   return `${days}d ago`;
+}
+
+/* ─── Project Avatar with favicon ─── */
+function ProjectFaviconAvatar({ project }: { project: ProjectWithCounts }) {
+  const [imgError, setImgError] = React.useState(false);
+
+  let faviconUrl = "";
+  if (project.website_url && !imgError) {
+    try {
+      const { hostname } = new URL(project.website_url);
+      faviconUrl = `https://www.google.com/s2/favicons?domain=${hostname}&sz=64`;
+    } catch { /* invalid URL */ }
+  }
+
+  if (faviconUrl) {
+    return (
+      <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-muted/50 overflow-hidden">
+        <Image
+          src={faviconUrl}
+          alt={project.name}
+          width={40}
+          height={40}
+          className="size-10 object-contain"
+          onError={() => setImgError(true)}
+          unoptimized
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-muted/50 text-foreground">
+      <span className="text-base font-bold">
+        {project.name.charAt(0).toUpperCase()}
+      </span>
+    </div>
+  );
 }
 
 /* ─── Props ─── */
@@ -203,11 +241,7 @@ export function ProjectOverview({ project, features }: ProjectOverviewProps) {
       <motion.div variants={item}>
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="flex items-start gap-4">
-            <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-muted/50 text-foreground">
-              <span className="text-base font-bold">
-                {project.name.charAt(0).toUpperCase()}
-              </span>
-            </div>
+            <ProjectFaviconAvatar project={project} />
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-xl sm:text-2xl font-semibold tracking-[-0.04em] text-foreground">
