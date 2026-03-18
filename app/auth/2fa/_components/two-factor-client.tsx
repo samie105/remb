@@ -68,9 +68,17 @@ export function TwoFactorClient() {
         setError("Passkey verification failed. Please try again.");
       }
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Passkey authentication failed";
-      setError(message);
+      const raw = err instanceof Error ? err.message : "";
+      const isNotAllowed =
+        (err instanceof Error && err.name === "NotAllowedError") ||
+        raw.includes("not allowed") ||
+        raw.includes("timed out") ||
+        raw.includes("w3.org");
+      setError(
+        isNotAllowed
+          ? "Passkey prompt was dismissed or timed out. Please try again."
+          : raw || "Passkey authentication failed"
+      );
     } finally {
       setIsLoading(false);
     }
@@ -149,7 +157,7 @@ export function TwoFactorClient() {
           <motion.div
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: "auto" }}
-            className="mb-4 rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2.5 text-[13px] text-destructive"
+            className="mb-4 rounded-lg bg-destructive/5 px-3 py-2.5 text-[13px] text-destructive"
           >
             {error}
           </motion.div>
