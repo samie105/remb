@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/richie/remb/internal/config"
-	"github.com/richie/remb/internal/credentials"
+	"github.com/useremb/remb/internal/config"
+	"github.com/useremb/remb/internal/credentials"
 )
 
 // APIError represents an API error response.

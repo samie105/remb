@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/richie/remb/internal/config"
-	"github.com/richie/remb/internal/credentials"
-	"github.com/richie/remb/internal/output"
+	"github.com/useremb/remb/internal/config"
+	"github.com/useremb/remb/internal/credentials"
+	"github.com/useremb/remb/internal/output"
 	"github.com/spf13/cobra"
 )
 

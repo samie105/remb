@@ -1,0 +1,209 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+
+jobs:
+  # ── 1. Build Go binaries and upload to GitHub Release ──────────────────────
+  release-go:
+    name: Build & Release Go CLI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Get version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build cross-platform binaries
+        working-directory: packages/cli-go
+        run: |
+          mkdir -p dist
+          VERSION=${{ steps.version.outputs.VERSION }}
+          LDFLAGS="-s -w -X github.com/useremb/remb/cmd.Version=$VERSION"
+
+          GOOS=darwin  GOARCH=arm64 go build -trimpath -ldflags "$LDFLAGS" -o dist/remb-darwin-arm64 .
+          GOOS=darwin  GOARCH=amd64 go build -trimpath -ldflags "$LDFLAGS" -o dist/remb-darwin-amd64 .
+          GOOS=linux   GOARCH=amd64 go build -trimpath -ldflags "$LDFLAGS" -o dist/remb-linux-amd64 .
+          GOOS=linux   GOARCH=arm64 go build -trimpath -ldflags "$LDFLAGS" -o dist/remb-linux-arm64 .
+          GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "$LDFLAGS" -o dist/remb-windows-amd64.exe .
+
+      - name: Compute SHA256 checksums
+        working-directory: packages/cli-go/dist
+        run: sha256sum remb-* > checksums.txt
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            packages/cli-go/dist/remb-darwin-arm64
+            packages/cli-go/dist/remb-darwin-amd64
+            packages/cli-go/dist/remb-linux-amd64
+            packages/cli-go/dist/remb-linux-arm64
+            packages/cli-go/dist/remb-windows-amd64.exe
+            packages/cli-go/dist/checksums.txt
+          generate_release_notes: true
+
+  # ── 2. Publish Node.js CLI to npm ──────────────────────────────────────────
+  release-npm-cli:
+    name: Publish Node CLI to npm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Install dependencies
+        working-directory: packages/cli
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        working-directory: packages/cli
+        run: pnpm build
+
+      - name: Bump version to match tag
+        working-directory: packages/cli
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          npm version "$VERSION" --no-git-tag-version
+
+      - name: Publish
+        working-directory: packages/cli
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  # ── 3. Publish npm binary wrapper (downloads Go binary on postinstall) ──────
+  release-npm-wrapper:
+    name: Publish npm binary wrapper
+    runs-on: ubuntu-latest
+    needs: release-go        # binary must exist before wrapper publishes
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Bump version to match tag
+        working-directory: packages/cli-npm
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          npm version "$VERSION" --no-git-tag-version
+
+      - name: Publish
+        working-directory: packages/cli-npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  # ── 4. Build & publish VS Code extension ───────────────────────────────────
+  release-vscode:
+    name: Publish VS Code Extension
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Install dependencies
+        working-directory: packages/vscode-extension
+        run: pnpm install --frozen-lockfile
+
+      - name: Bump version to match tag
+        working-directory: packages/vscode-extension
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          npm version "$VERSION" --no-git-tag-version
+
+      - name: Install vsce
+        run: npm install -g @vscode/vsce
+
+      - name: Package extension
+        working-directory: packages/vscode-extension
+        run: vsce package --no-dependencies
+
+      - name: Publish to VS Code Marketplace
+        working-directory: packages/vscode-extension
+        run: vsce publish --no-dependencies
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+
+      - name: Upload .vsix to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: packages/vscode-extension/*.vsix
+
+  # ── 5. Update Homebrew formula with real SHA256 hashes ─────────────────────
+  update-homebrew:
+    name: Update Homebrew Tap
+    runs-on: ubuntu-latest
+    needs: release-go
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute SHA256 of macOS binaries
+        id: sha
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          ARM64_URL="https://github.com/useremb/remb/releases/download/${GITHUB_REF_NAME}/remb-darwin-arm64"
+          AMD64_URL="https://github.com/useremb/remb/releases/download/${GITHUB_REF_NAME}/remb-darwin-amd64"
+          LINUX_ARM64_URL="https://github.com/useremb/remb/releases/download/${GITHUB_REF_NAME}/remb-linux-arm64"
+          LINUX_AMD64_URL="https://github.com/useremb/remb/releases/download/${GITHUB_REF_NAME}/remb-linux-amd64"
+
+          SHA_DARWIN_ARM64=$(curl -fsSL "$ARM64_URL" | sha256sum | cut -d' ' -f1)
+          SHA_DARWIN_AMD64=$(curl -fsSL "$AMD64_URL" | sha256sum | cut -d' ' -f1)
+          SHA_LINUX_ARM64=$(curl -fsSL "$LINUX_ARM64_URL" | sha256sum | cut -d' ' -f1)
+          SHA_LINUX_AMD64=$(curl -fsSL "$LINUX_AMD64_URL" | sha256sum | cut -d' ' -f1)
+
+          echo "DARWIN_ARM64=$SHA_DARWIN_ARM64" >> "$GITHUB_OUTPUT"
+          echo "DARWIN_AMD64=$SHA_DARWIN_AMD64" >> "$GITHUB_OUTPUT"
+          echo "LINUX_ARM64=$SHA_LINUX_ARM64" >> "$GITHUB_OUTPUT"
+          echo "LINUX_AMD64=$SHA_LINUX_AMD64" >> "$GITHUB_OUTPUT"
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Update formula with real SHA256 hashes and version
+        run: |
+          VERSION="${{ steps.sha.outputs.VERSION }}"
+          sed -i "s/version \".*\"/version \"$VERSION\"/" homebrew/remb.rb
+          sed -i "s/REPLACE_WITH_SHA256_OF_remb-darwin-arm64/${{ steps.sha.outputs.DARWIN_ARM64 }}/" homebrew/remb.rb
+          sed -i "s/REPLACE_WITH_SHA256_OF_remb-darwin-amd64/${{ steps.sha.outputs.DARWIN_AMD64 }}/" homebrew/remb.rb
+          sed -i "s/REPLACE_WITH_SHA256_OF_remb-linux-arm64/${{ steps.sha.outputs.LINUX_ARM64 }}/" homebrew/remb.rb
+          sed -i "s/REPLACE_WITH_SHA256_OF_remb-linux-amd64/${{ steps.sha.outputs.LINUX_AMD64 }}/" homebrew/remb.rb
+
+      - name: Push updated formula to Homebrew tap
+        run: |
+          git clone https://x-access-token:${{ secrets.HOMEBREW_TAP_TOKEN }}@github.com/useremb/homebrew-remb.git tap-repo
+          mkdir -p tap-repo/Formula
+          cp homebrew/remb.rb tap-repo/Formula/remb.rb
+          cd tap-repo
+          git config user.email "bot@useremb.com"
+          git config user.name "remb-bot"
+          git add Formula/remb.rb
+          git commit -m "Update remb to v${{ steps.sha.outputs.VERSION }}"
+          git push

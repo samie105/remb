@@ -37,7 +37,7 @@ export class ApiClient {
 
   constructor(private getApiKey: () => Promise<string | undefined>) {
     const config = vscode.workspace.getConfiguration("remb");
-    this.baseUrl = (config.get<string>("apiUrl") ?? "http://localhost:3000").replace(/\/+$/, "");
+    this.baseUrl = (config.get<string>("apiUrl") ?? "https://useremb.com").replace(/\/+$/, "");
   }
 
   /** Reset the "already prompted" guard so the next 401 will prompt again. */

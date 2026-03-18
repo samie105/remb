@@ -171,7 +171,7 @@ function keyValue(label, value) {
 import { resolve as resolve2, dirname as dirname2 } from "path";
 import { existsSync as existsSync2, readFileSync as readFileSync2, writeFileSync as writeFileSync2, mkdirSync as mkdirSync2 } from "fs";
 var CONFIG_FILENAME = ".remb.yml";
-var DEFAULT_API_URL = "http://localhost:3000";
+var DEFAULT_API_URL = "https://useremb.com";
 function findProjectConfig(cwd = process.cwd()) {
   let dir = resolve2(cwd);
   while (true) {
@@ -545,7 +545,7 @@ function validatePositiveInt(value, field, max) {
 }
 
 // src/commands/login.ts
-var DEFAULT_API_URL2 = "http://localhost:3000";
+var DEFAULT_API_URL2 = "https://useremb.com";
 function getBaseUrl() {
   const projectConfig = findProjectConfig();
   return (projectConfig?.config.api_url ?? DEFAULT_API_URL2).replace(/\/+$/, "");
@@ -1035,7 +1035,7 @@ Or connect to the hosted endpoint at \`${apiUrl}/api/mcp\` for aggregated MCP ac
 All commands respect the \`-p/--project <slug>\` flag or fall back to \`.remb.yml\` in the current directory tree.
 `;
 }
-var initCommand = new Command2("init").description("Initialize a project with remb tracking").argument("[project-name]", "Project name (defaults to directory name)").option("--api-url <url>", "API server URL", "http://localhost:3000").option("--force", "Overwrite existing configuration", false).option(
+var initCommand = new Command2("init").description("Initialize a project with remb tracking").argument("[project-name]", "Project name (defaults to directory name)").option("--api-url <url>", "API server URL", "https://useremb.com").option("--force", "Overwrite existing configuration", false).option(
   "--ide <ide>",
   "IDE to configure (vscode, cursor, windsurf, cline, jetbrains, claude, aider, all)"
 ).action(async (projectName, opts) => {
@@ -2594,12 +2594,12 @@ function projectsUseCommand() {
 Examples:
   $ remb projects use my-app
   $ remb projects switch my-app
-  $ remb projects use my-app --api-url https://remb.vercel.app`
+  $ remb projects use my-app --api-url https://useremb.com`
   ).action(async (slug, opts) => {
     const cwd = process.cwd();
     const existing = findProjectConfig(cwd);
     const configPath = resolve5(existing?.dir ?? cwd, ".remb.yml");
-    const apiUrl = opts.apiUrl ?? existing?.config.api_url ?? "http://localhost:3000";
+    const apiUrl = opts.apiUrl ?? existing?.config.api_url ?? "https://useremb.com";
     const ide = existing?.config.ide;
     const spinner = ora6(`Looking up project "${slug}"...`).start();
     try {

@@ -53,7 +53,7 @@ Created by `remb init` in your project root:
 
 ```yaml
 project: my-project
-api_url: https://remb.vercel.app
+api_url: https://useremb.com
 ```
 
 ### Credentials (`~/.config/remb/credentials`)

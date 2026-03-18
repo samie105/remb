@@ -7,7 +7,7 @@ A fast, zero-dependency CLI for Remb — persistent memory layer for AI coding s
 ### One-liner (macOS / Linux)
 
 ```bash
-curl -fsSL https://remb.vercel.app/install.sh | sh
+curl -fsSL https://useremb.com/install.sh | sh
 ```
 
 ### From source
@@ -20,12 +20,12 @@ make install
 ### Go install
 
 ```bash
-go install github.com/richie/remb@latest
+go install github.com/useremb/remb@latest
 ```
 
 ### Manual download
 
-Download pre-built binaries from [GitHub Releases](https://github.com/richie/remb/releases):
+Download pre-built binaries from [GitHub Releases](https://github.com/useremb/remb/releases):
 
 | Platform | Binary |
 |----------|--------|
@@ -80,7 +80,7 @@ remb serve
 **Project config** (`.remb.yml` — safe to commit):
 ```yaml
 project: my-project
-api_url: https://remb.vercel.app
+api_url: https://useremb.com
 ```
 
 **Credentials** (`~/.config/remb/credentials` — keep secret):

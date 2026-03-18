@@ -1,9 +1,21 @@
 {
-  "name": "remb",
+  "name": "remb-go",
   "version": "0.1.0",
-  "description": "Persistent memory layer for AI coding sessions — CLI",
+  "description": "Persistent memory layer for AI coding sessions — Go binary installer",
   "keywords": ["ai", "context", "mcp", "cli", "coding-assistant"],
   "license": "MIT",
+  "homepage": "https://useremb.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/useremb/remb.git",
+    "directory": "packages/cli-npm"
+  },
+  "bugs": {
+    "url": "https://github.com/useremb/remb/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "bin": {
     "remb": "./bin/remb.js"
   },

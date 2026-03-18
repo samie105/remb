@@ -9,7 +9,7 @@ const withPWA = withPWAInit({
   aggressiveFrontEndNavCaching: true,
 });
 
-const nextConfig: NextConfig = {
+const nextConfig = {
   serverActions: {
     bodySizeLimit: "10mb",
   },
@@ -20,8 +20,25 @@ const nextConfig: NextConfig = {
         protocol: "https",
         hostname: "avatars.githubusercontent.com",
       },
+      {
+        protocol: "https",
+        hostname: "www.google.com",
+        pathname: "/s2/favicons/**",
+      },
     ],
   },
-};
+  async rewrites() {
+    return {
+      beforeFiles: [
+        // Route mcp.useremb.com/* → /api/mcp (Streamable HTTP MCP endpoint)
+        {
+          source: "/:path*",
+          has: [{ type: "host", value: "mcp.useremb.com" }],
+          destination: "/api/mcp",
+        },
+      ],
+    };
+  },
+} satisfies Omit<NextConfig, "serverActions"> & { serverActions?: { bodySizeLimit?: string } };
 
 export default withPWA(nextConfig);

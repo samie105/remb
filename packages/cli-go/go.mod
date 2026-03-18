@@ -1,4 +1,4 @@
-module github.com/richie/remb
+module github.com/useremb/remb
 
 go 1.26.1
 

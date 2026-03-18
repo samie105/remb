@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/richie/remb/internal/api"
-	"github.com/richie/remb/internal/output"
-	"github.com/richie/remb/internal/scanner"
+	"github.com/useremb/remb/internal/api"
+	"github.com/useremb/remb/internal/output"
+	"github.com/useremb/remb/internal/scanner"
 	"github.com/spf13/cobra"
 )
 

@@ -90,6 +90,7 @@ export interface Database {
           status: string;
           scan_on_push: boolean;
           webhook_secret: string | null;
+          github_webhook_id: number | null;
           ignore_patterns: string | null;
           website_url: string | null;
           created_at: string;
@@ -108,6 +109,7 @@ export interface Database {
           status?: string;
           scan_on_push?: boolean;
           webhook_secret?: string | null;
+          github_webhook_id?: number | null;
           ignore_patterns?: string | null;
           website_url?: string | null;
           created_at?: string;
@@ -124,6 +126,7 @@ export interface Database {
           status?: string;
           scan_on_push?: boolean;
           webhook_secret?: string | null;
+          github_webhook_id?: number | null;
           ignore_patterns?: string | null;
           website_url?: string | null;
           updated_at?: string;
@@ -685,6 +688,7 @@ export interface Database {
           max_context_bytes: number;
           max_token_budget: number;
         };
+        Relationships: [];
       };
     };
     Functions: {

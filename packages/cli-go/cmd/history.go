@@ -6,8 +6,8 @@ import (
 	"os"
 	"sort"
 
-	"github.com/richie/remb/internal/api"
-	"github.com/richie/remb/internal/config"
+	"github.com/useremb/remb/internal/api"
+	"github.com/useremb/remb/internal/config"
 	"github.com/spf13/cobra"
 )
 

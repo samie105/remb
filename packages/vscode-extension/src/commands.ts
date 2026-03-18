@@ -221,7 +221,7 @@ export function registerCommands(
   context.subscriptions.push(
     vscode.commands.registerCommand("remb.openDashboard", () => {
       const config = vscode.workspace.getConfiguration("remb");
-      const baseUrl = config.get<string>("apiUrl") ?? "http://localhost:3000";
+      const baseUrl = config.get<string>("apiUrl") ?? "https://useremb.com";
       vscode.env.openExternal(vscode.Uri.parse(`${baseUrl}/dashboard`));
     })
   );

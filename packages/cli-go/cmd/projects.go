@@ -6,8 +6,8 @@ import (
 	"os"
 	"text/tabwriter"
 
-	"github.com/richie/remb/internal/api"
-	"github.com/richie/remb/internal/output"
+	"github.com/useremb/remb/internal/api"
+	"github.com/useremb/remb/internal/output"
 	"github.com/spf13/cobra"
 )
 

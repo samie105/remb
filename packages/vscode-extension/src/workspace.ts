@@ -121,7 +121,7 @@ function parseSimpleYaml(raw: string): ProjectConfig {
   }
   return {
     project: result.project ?? "",
-    api_url: result.api_url ?? "http://localhost:3000",
+    api_url: result.api_url ?? "https://useremb.com",
     ide: result.ide || undefined,
   };
 }

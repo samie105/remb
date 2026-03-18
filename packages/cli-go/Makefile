@@ -1,7 +1,7 @@
 VERSION ?= 0.1.0
 BINARY  := remb
 GOFLAGS := -trimpath
-LDFLAGS := -s -w -X github.com/richie/remb/cmd.Version=$(VERSION)
+LDFLAGS := -s -w -X github.com/useremb/remb/cmd.Version=$(VERSION)
 
 # Detect OS/Arch
 GOOS   ?= $(shell go env GOOS)
