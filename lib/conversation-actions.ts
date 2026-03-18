@@ -2,15 +2,38 @@
 
 import { createAdminClient } from "@/lib/supabase/server";
 import type { Json } from "@/lib/supabase/types";
+import {
+  summarizeConversation,
+  findDuplicateConversation,
+  searchConversations,
+  type RawConversationEvent,
+} from "@/lib/conversation-summarizer";
+import { generateEmbedding } from "@/lib/openai";
 
 /* ─── types ─── */
 
 interface LogConversationInput {
   userId: string;
   projectId?: string | null;
+  projectSlug?: string | null;
   sessionId: string;
-  type?: "summary" | "tool_call" | "milestone";
+  type?: "summary" | "tool_call" | "milestone" | "conversation";
   content: string;
+  tags?: string[];
+  metadata?: Record<string, unknown>;
+  source?: "mcp" | "cli" | "web" | "api";
+}
+
+/**
+ * Smart conversation logging with raw IDE events.
+ * Events are AI-summarized, embedded, and dedup-checked before storage.
+ */
+interface LogSmartConversationInput {
+  userId: string;
+  projectId?: string | null;
+  projectSlug?: string | null;
+  sessionId: string;
+  events: RawConversationEvent[];
   metadata?: Record<string, unknown>;
   source?: "mcp" | "cli" | "web" | "api";
 }
@@ -18,13 +41,23 @@ interface LogConversationInput {
 interface GetHistoryInput {
   userId: string;
   projectId?: string | null;
+  projectSlug?: string | null;
   startDate?: string;
   endDate?: string;
   limit?: number;
   sessionId?: string;
 }
 
-/* ─── log a conversation entry ─── */
+interface SearchConversationInput {
+  userId: string;
+  query: string;
+  projectSlug?: string | null;
+  tags?: string[];
+  limit?: number;
+  threshold?: number;
+}
+
+/* ─── log a conversation entry (basic — pre-formatted content) ─── */
 
 /** Hard cap: 32 KB per conversation entry (matches DB constraint) */
 const MAX_CONVERSATION_BYTES = 32_768;
@@ -38,17 +71,58 @@ export async function logConversation(input: LogConversationInput) {
     ? input.content.slice(0, MAX_CONVERSATION_BYTES - 20) + "\n... (trimmed)"
     : input.content;
 
+  // Generate embedding for the content so it's searchable
+  let embedding: number[] | null = null;
+  try {
+    embedding = await generateEmbedding(trimmedContent.slice(0, 8000));
+  } catch { /* non-fatal — entry still saved without embedding */ }
+
+  // Dedup check: if very similar entry exists recently, update it instead
+  if (embedding && input.projectSlug) {
+    const dup = await findDuplicateConversation(
+      input.userId,
+      input.projectSlug,
+      embedding,
+    );
+    if (dup) {
+      // Merge — append new content to existing entry
+      const merged = `${dup.content}\n---\n${trimmedContent}`;
+      const mergedTrimmed = new TextEncoder().encode(merged).length > MAX_CONVERSATION_BYTES
+        ? merged.slice(0, MAX_CONVERSATION_BYTES - 20) + "\n... (trimmed)"
+        : merged;
+
+      const { data, error } = await db
+        .from("conversation_entries")
+        .update({
+          content: mergedTrimmed,
+          tags: input.tags ?? [],
+          metadata: (input.metadata ?? {}) as Json,
+          embedding: `[${embedding.join(",")}]`,
+        })
+        .eq("id", dup.id)
+        .select("id, created_at")
+        .single();
+
+      if (!error && data) return { ...data, deduplicated: true };
+    }
+  }
+
+  const insertData = {
+    user_id: input.userId,
+    project_id: input.projectId ?? null,
+    project_slug: input.projectSlug ?? null,
+    session_id: input.sessionId,
+    type: input.type ?? "summary",
+    content: trimmedContent,
+    tags: input.tags ?? [],
+    metadata: (input.metadata ?? {}) as Json,
+    source: input.source ?? "mcp",
+    ...(embedding ? { embedding: `[${embedding.join(",")}]` } : {}),
+  };
+
   const { data, error } = await db
     .from("conversation_entries")
-    .insert({
-      user_id: input.userId,
-      project_id: input.projectId ?? null,
-      session_id: input.sessionId,
-      type: input.type ?? "summary",
-      content: trimmedContent,
-      metadata: (input.metadata ?? {}) as Json,
-      source: input.source ?? "mcp",
-    })
+    .insert(insertData)
     .select("id, created_at")
     .single();
 
@@ -63,6 +137,98 @@ export async function logConversation(input: LogConversationInput) {
   return data;
 }
 
+/* ─── log smart conversation (raw events → AI summarize → embed → dedup → store) ─── */
+
+export async function logSmartConversation(input: LogSmartConversationInput) {
+  // Step 1: AI summarize the raw events
+  const { summary, tags, embedding } = await summarizeConversation(
+    input.events,
+    input.projectSlug ?? undefined,
+  );
+
+  // Step 2: Dedup check
+  if (input.projectSlug) {
+    const dup = await findDuplicateConversation(
+      input.userId,
+      input.projectSlug,
+      embedding,
+    );
+    if (dup) {
+      // Similar entry exists — merge the new summary into the existing one
+      const db = createAdminClient();
+      const merged = `${dup.content}\n• ${summary}`;
+      const mergedTrimmed = new TextEncoder().encode(merged).length > MAX_CONVERSATION_BYTES
+        ? merged.slice(0, MAX_CONVERSATION_BYTES - 20) + "\n... (trimmed)"
+        : merged;
+
+      // Re-embed the merged content
+      let mergedEmbedding: number[];
+      try {
+        mergedEmbedding = await generateEmbedding(mergedTrimmed.slice(0, 8000));
+      } catch {
+        mergedEmbedding = embedding;
+      }
+
+      const { data, error } = await db
+        .from("conversation_entries")
+        .update({
+          content: mergedTrimmed,
+          tags: [...new Set([...(tags ?? []), ...(dup.content.match(/tags/) ? [] : tags)])],
+          embedding: `[${mergedEmbedding.join(",")}]`,
+          metadata: (input.metadata ?? {}) as Json,
+          is_summarized: true,
+        })
+        .eq("id", dup.id)
+        .select("id, created_at")
+        .single();
+
+      if (!error && data) return { ...data, deduplicated: true, summary };
+    }
+  }
+
+  // Step 3: Insert new entry
+  const db = createAdminClient();
+
+  const { data, error } = await db
+    .from("conversation_entries")
+    .insert({
+      user_id: input.userId,
+      project_id: input.projectId ?? null,
+      project_slug: input.projectSlug ?? null,
+      session_id: input.sessionId,
+      type: "conversation" as const,
+      content: summary,
+      tags,
+      metadata: (input.metadata ?? {}) as Json,
+      source: input.source ?? "mcp",
+      embedding: `[${embedding.join(",")}]`,
+      is_summarized: true,
+    })
+    .select("id, created_at")
+    .single();
+
+  if (error) throw new Error(error.message);
+
+  // Auto-trim
+  void db.rpc("trim_old_conversations", {
+    p_user_id: input.userId,
+    keep_count: 1000,
+  });
+
+  return { ...data, summary, tags };
+}
+
+/* ─── search conversations semantically ─── */
+
+export async function searchConversationHistory(input: SearchConversationInput) {
+  return searchConversations(input.userId, input.query, {
+    projectSlug: input.projectSlug ?? undefined,
+    tags: input.tags,
+    limit: input.limit,
+    threshold: input.threshold,
+  });
+}
+
 /* ─── query conversation history ─── */
 
 export async function getConversationHistory(input: GetHistoryInput) {
@@ -71,13 +237,16 @@ export async function getConversationHistory(input: GetHistoryInput) {
 
   let query = db
     .from("conversation_entries")
-    .select("id, project_id, session_id, type, content, metadata, source, created_at")
+    .select("id, project_id, project_slug, session_id, type, content, tags, metadata, source, created_at, is_summarized")
     .eq("user_id", input.userId)
     .order("created_at", { ascending: false })
     .limit(limit);
 
   if (input.projectId) {
     query = query.eq("project_id", input.projectId);
+  }
+  if (input.projectSlug) {
+    query = query.eq("project_slug", input.projectSlug);
   }
   if (input.sessionId) {
     query = query.eq("session_id", input.sessionId);

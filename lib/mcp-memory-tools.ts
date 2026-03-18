@@ -257,7 +257,7 @@ export function getBuiltinTools(): AggregatedTool[] {
     },
     {
       name: `${PREFIX}__conversation_log`,
-      description: "[Remb] Log what you discussed or accomplished in this session. Call this to record summaries, milestones, or key decisions so future sessions know what happened.",
+      description: "[Remb] Log what you discussed or accomplished in this session. Call this to record summaries, milestones, or key decisions so future sessions know what happened. Content is AI-summarized, embedded for semantic search, and deduplicated automatically.",
       inputSchema: {
         type: "object",
         properties: {
@@ -269,6 +269,10 @@ export function getBuiltinTools(): AggregatedTool[] {
             type: "string",
             description: "Optional project ID to associate with",
           },
+          project_slug: {
+            type: "string",
+            description: "Project slug (e.g. 'my-app') — used for tagging and dedup",
+          },
           session_id: {
             type: "string",
             description: "Session identifier (auto-generated if omitted)",
@@ -277,6 +281,11 @@ export function getBuiltinTools(): AggregatedTool[] {
             type: "string",
             enum: ["summary", "milestone"],
             description: "Entry type: summary (default) or milestone for major checkpoints",
+          },
+          tags: {
+            type: "array",
+            items: { type: "string" },
+            description: "Tags for categorization (e.g. ['auth', 'bug-fix', 'refactor'])",
           },
         },
         required: ["summary"],
@@ -293,6 +302,10 @@ export function getBuiltinTools(): AggregatedTool[] {
           project_id: {
             type: "string",
             description: "Filter by project ID",
+          },
+          project_slug: {
+            type: "string",
+            description: "Filter by project slug (e.g. 'my-app')",
           },
           start_date: {
             type: "string",
@@ -315,6 +328,35 @@ export function getBuiltinTools(): AggregatedTool[] {
       },
       _serverId: "__builtin__",
       _originalName: "conversation_history",
+    },
+    {
+      name: `${PREFIX}__conversation_search`,
+      description: "[Remb] Semantically search conversation history. Find past discussions, decisions, and work related to a topic using AI-powered similarity search.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "Natural language search query (e.g. 'authentication bug fixes')",
+          },
+          project_slug: {
+            type: "string",
+            description: "Filter by project slug",
+          },
+          tags: {
+            type: "array",
+            items: { type: "string" },
+            description: "Filter by tags",
+          },
+          limit: {
+            type: "number",
+            description: "Max results (default 10)",
+          },
+        },
+        required: ["query"],
+      },
+      _serverId: "__builtin__",
+      _originalName: "conversation_search",
     },
     // ─── Project & Context tools ───
     {
@@ -917,9 +959,11 @@ export async function callBuiltinTool(
       const entry = await logConversation({
         userId,
         projectId: (args.project_id as string) ?? null,
+        projectSlug: (args.project_slug as string) ?? null,
         sessionId: (args.session_id as string) ?? `mcp-${Date.now()}`,
         type: (args.type as "summary" | "milestone") ?? "summary",
         content: summary,
+        tags: Array.isArray(args.tags) ? (args.tags as string[]) : [],
         source: "mcp",
       });
 
@@ -927,7 +971,12 @@ export async function callBuiltinTool(
         content: [
           {
             type: "text",
-            text: JSON.stringify({ logged: true, id: entry.id, created_at: entry.created_at }),
+            text: JSON.stringify({
+              logged: true,
+              id: entry.id,
+              created_at: entry.created_at,
+              deduplicated: (entry as Record<string, unknown>).deduplicated ?? false,
+            }),
           },
         ],
       };
@@ -940,6 +989,7 @@ export async function callBuiltinTool(
       const input = {
         userId,
         projectId: (args.project_id as string) ?? undefined,
+        projectSlug: (args.project_slug as string) ?? undefined,
         startDate: (args.start_date as string) ?? undefined,
         endDate: (args.end_date as string) ?? undefined,
         limit: (args.limit as number) ?? 50,
@@ -955,6 +1005,24 @@ export async function callBuiltinTool(
       const markdown = await generateConversationMarkdown(input);
       return {
         content: [{ type: "text", text: markdown }],
+      };
+    }
+
+    case "conversation_search": {
+      const query = args.query as string;
+      if (!query) throw new Error("query is required");
+
+      const { searchConversationHistory } = await import("@/lib/conversation-actions");
+      const results = await searchConversationHistory({
+        userId,
+        query,
+        projectSlug: (args.project_slug as string) ?? undefined,
+        tags: Array.isArray(args.tags) ? (args.tags as string[]) : undefined,
+        limit: (args.limit as number) ?? 10,
+      });
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
       };
     }
 

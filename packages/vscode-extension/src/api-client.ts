@@ -285,11 +285,34 @@ export class ApiClient {
     content: string;
     projectSlug?: string;
     type?: string;
+    tags?: string[];
     metadata?: Record<string, unknown>;
   }) {
-    return this.request<{ logged: boolean; id: string; created_at: string }>(
+    return this.request<{ logged: boolean; id: string; created_at: string; deduplicated?: boolean }>(
       "POST",
       "/api/cli/conversations",
+      params
+    );
+  }
+
+  /**
+   * Send raw IDE events to the server for AI summarization, embedding, and dedup.
+   * This is the smart path — the server does the heavy lifting.
+   */
+  async logSmartConversation(params: {
+    events: Array<{
+      type: string;
+      text?: string;
+      path?: string;
+      name?: string;
+      timestamp?: number;
+    }>;
+    projectSlug?: string;
+    metadata?: Record<string, unknown>;
+  }) {
+    return this.request<{ logged: boolean; id: string; created_at: string; deduplicated?: boolean; summary?: string }>(
+      "POST",
+      "/api/cli/conversations/smart",
       params
     );
   }

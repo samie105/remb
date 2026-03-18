@@ -460,14 +460,17 @@ func (c *Client) GetScanStatus(scanId string) (*ScanStatusResponse, error) {
 
 // ConversationEntry represents a single conversation history entry.
 type ConversationEntry struct {
-	ID        string                 `json:"id"`
-	ProjectID *string                `json:"project_id"`
-	SessionID string                 `json:"session_id"`
-	Type      string                 `json:"type"`
-	Content   string                 `json:"content"`
-	Metadata  map[string]interface{} `json:"metadata"`
-	Source    string                 `json:"source"`
-	CreatedAt string                 `json:"created_at"`
+	ID          string                 `json:"id"`
+	ProjectID   *string                `json:"project_id"`
+	ProjectSlug string                 `json:"project_slug,omitempty"`
+	SessionID   string                 `json:"session_id"`
+	Type        string                 `json:"type"`
+	Content     string                 `json:"content"`
+	Tags        []string               `json:"tags,omitempty"`
+	Metadata    map[string]interface{} `json:"metadata"`
+	Source      string                 `json:"source"`
+	CreatedAt   string                 `json:"created_at"`
+	Similarity  float64                `json:"similarity,omitempty"`
 }
 
 // ConversationHistoryResponse is the response from the conversations endpoint.
@@ -481,15 +484,22 @@ type LogConversationRequest struct {
 	Content     string                 `json:"content"`
 	ProjectSlug string                 `json:"projectSlug,omitempty"`
 	Type        string                 `json:"type,omitempty"`
+	Tags        []string               `json:"tags,omitempty"`
 	Metadata    map[string]interface{} `json:"metadata,omitempty"`
 	SessionID   string                 `json:"sessionId,omitempty"`
 }
 
 // LogConversationResponse is the response after logging an entry.
 type LogConversationResponse struct {
-	Logged    bool   `json:"logged"`
-	ID        string `json:"id"`
-	CreatedAt string `json:"created_at"`
+	Logged       bool   `json:"logged"`
+	ID           string `json:"id"`
+	CreatedAt    string `json:"created_at"`
+	Deduplicated bool   `json:"deduplicated,omitempty"`
+}
+
+// SearchConversationsResponse is the response from the search endpoint.
+type SearchConversationsResponse struct {
+	Entries []ConversationEntry `json:"entries"`
 }
 
 // GetConversationHistory fetches conversation history with optional filters.
@@ -512,6 +522,23 @@ func (c *Client) LogConversation(req LogConversationRequest) (*LogConversationRe
 		return nil, err
 	}
 	var resp LogConversationResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("parse response: %w", err)
+	}
+	return &resp, nil
+}
+
+// SearchConversations performs semantic search across conversation history.
+func (c *Client) SearchConversations(query string, params map[string]string) (*SearchConversationsResponse, error) {
+	if params == nil {
+		params = map[string]string{}
+	}
+	params["q"] = query
+	data, err := c.request("GET", "/api/cli/conversations/search", nil, params)
+	if err != nil {
+		return nil, err
+	}
+	var resp SearchConversationsResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
 		return nil, fmt.Errorf("parse response: %w", err)
 	}

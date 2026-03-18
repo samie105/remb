@@ -214,7 +214,7 @@ export const INSTALL_METHODS: InstallMethodItem[] = [
     desc: "Zero dependencies, Go binary",
     cmd: "curl -fsSL https://useremb.com/install.sh | sh",
   },
-  { label: "npm", desc: "Node.js CLI", cmd: "npm install -g remb-cli" },
+  { label: "npm", desc: "Node.js CLI", cmd: "npm install -g remb-cli --prefix ~/.npm-global" },
   {
     label: "Homebrew",
     desc: "macOS & Linux",

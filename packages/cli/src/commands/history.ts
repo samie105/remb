@@ -12,6 +12,7 @@ import {
 
 export const historyCommand = new Command("history")
   .description("View conversation history — what AI discussed and did across sessions")
+  .option("-s, --search <query>", "Semantic search across conversation history")
   .option("-d, --date <date>", "Filter by specific date (YYYY-MM-DD)")
   .option("--from <date>", "Start date filter (YYYY-MM-DD)")
   .option("--to <date>", "End date filter (YYYY-MM-DD)")
@@ -20,7 +21,7 @@ export const historyCommand = new Command("history")
   .option("--format <fmt>", "Output format: timeline (default), markdown, json", "timeline")
   .addHelpText(
     "after",
-    `\nExamples:\n  $ remb history\n  $ remb history -d 2025-01-15\n  $ remb history --from 2025-01-01 --to 2025-01-31 --format json`,
+    `\nExamples:\n  $ remb history\n  $ remb history -d 2025-01-15\n  $ remb history --search "authentication flow"\n  $ remb history --from 2025-01-01 --to 2025-01-31 --format json`,
   )
   .action(async (opts) => {
     // Validate date inputs
@@ -39,6 +40,43 @@ export const historyCommand = new Command("history")
     try {
       const client = createApiClient();
       const projectSlug = opts.project;
+
+      // ── Semantic search mode ──
+      if (opts.search) {
+        spinner.text = "Searching conversations...";
+        const { results } = await client.searchConversations({
+          query: opts.search,
+          projectSlug,
+          limit,
+        });
+        spinner.stop();
+
+        if (results.length === 0) {
+          console.log(chalk.dim("  No matching conversations found."));
+          return;
+        }
+
+        if (opts.format === "json") {
+          console.log(JSON.stringify(results, null, 2));
+          return;
+        }
+
+        console.log();
+        console.log(chalk.bold(`  Search results for "${opts.search}"`));
+        console.log(chalk.dim(`  ${results.length} matches\n`));
+
+        for (const r of results) {
+          const date = chalk.dim(r.created_at.slice(0, 10));
+          const time = chalk.dim(r.created_at.slice(11, 16));
+          const sim = chalk.green(`${(r.similarity * 100).toFixed(0)}%`);
+          const tags = r.tags?.length ? chalk.blue(` [${r.tags.join(", ")}]`) : "";
+          const proj = r.project_slug ? chalk.dim(` (${r.project_slug})`) : "";
+          console.log(`  ${date} ${time} ${sim}${proj}${tags}`);
+          console.log(`    ${r.content.slice(0, 200)}${r.content.length > 200 ? "..." : ""}`);
+          console.log();
+        }
+        return;
+      }
 
       // Build date params
       let startDate: string | undefined;

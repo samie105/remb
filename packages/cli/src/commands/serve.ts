@@ -466,7 +466,11 @@ export const serveCommand = new Command("serve")
         type: z
           .string()
           .optional()
-          .describe("Entry type: summary, decision, progress, note (default: summary)"),
+          .describe("Entry type: summary, decision, progress, note, conversation (default: summary)"),
+        tags: z
+          .array(z.string())
+          .optional()
+          .describe("Tags for categorization and search (e.g., ['auth', 'bug-fix'])"),
       },
       async (params) => {
         const slug = params.projectSlug ?? projectSlug;
@@ -475,12 +479,14 @@ export const serveCommand = new Command("serve")
             content: params.content,
             projectSlug: slug,
             type: params.type ?? "summary",
+            tags: params.tags,
           });
+          const dedup = result.deduplicated ? " (merged with existing similar entry)" : "";
           return {
             content: [
               {
                 type: "text" as const,
-                text: `Conversation logged (ID: ${result.id})\nCreated: ${result.created_at}`,
+                text: `Conversation logged (ID: ${result.id})\nCreated: ${result.created_at}${dedup}`,
               },
             ],
           };
@@ -520,6 +526,47 @@ export const serveCommand = new Command("serve")
             .join("\n\n---\n\n");
           return {
             content: [{ type: "text" as const, text: `${total} conversation entries:\n\n${formatted}` }],
+          };
+        } catch (err) {
+          return { content: [{ type: "text" as const, text: `Error: ${err instanceof Error ? err.message : "Unknown"}` }] };
+        }
+      }
+    );
+
+    // ── Tool: conversation_search ───────────────────────────
+    server.tool(
+      "conversation_search",
+      "Semantic search across conversation history. Find past discussions by meaning, not just keywords.",
+      {
+        query: z.string().describe("Natural language search query"),
+        projectSlug: z
+          .string()
+          .optional()
+          .describe("Filter by project (uses default project if omitted)"),
+        tags: z.array(z.string()).optional().describe("Filter by tags"),
+        limit: z.number().optional().describe("Max results to return (default 10)"),
+      },
+      async (params) => {
+        const slug = params.projectSlug ?? projectSlug;
+        try {
+          const { results } = await client.searchConversations({
+            query: params.query,
+            projectSlug: slug,
+            tags: params.tags,
+            limit: params.limit ?? 10,
+          });
+          if (results.length === 0) {
+            return { content: [{ type: "text" as const, text: "No matching conversations found." }] };
+          }
+          const formatted = results
+            .map((r) => {
+              const tags = r.tags?.length ? ` [${r.tags.join(", ")}]` : "";
+              const proj = r.project_slug ? ` (${r.project_slug})` : "";
+              return `[${r.created_at.slice(0, 10)}] ${(r.similarity * 100).toFixed(0)}% match${proj}${tags}\n${r.content}`;
+            })
+            .join("\n\n---\n\n");
+          return {
+            content: [{ type: "text" as const, text: `${results.length} results:\n\n${formatted}` }],
           };
         } catch (err) {
           return { content: [{ type: "text" as const, text: `Error: ${err instanceof Error ? err.message : "Unknown"}` }] };

@@ -93,6 +93,13 @@ class ChatSessionWatcher implements vscode.Disposable {
   private callback: (turns: ChatTurn[]) => void;
   private offsetsFile: string | undefined;
   private saveTimer: ReturnType<typeof setTimeout> | undefined;
+  /**
+   * Debounce buffer for AI response chunks.
+   * Key: `${filePath}:${requestIndex}`, value: { text, timer }
+   * VS Code streams response chunks as many kind=2 updates — we only emit
+   * after 1s of silence for a given request index.
+   */
+  private responseBuffer = new Map<string, { text: string; timer: ReturnType<typeof setTimeout>; timestamp: number }>();
 
   constructor(callback: (turns: ChatTurn[]) => void) {
     this.callback = callback;
@@ -133,7 +140,7 @@ class ChatSessionWatcher implements vscode.Disposable {
             // Lines were written while we were down — catch up silently
             const allLines = content.split("\n").filter(Boolean);
             const missed = allLines.slice(savedOffset);
-            const turns = this.parseLines(missed);
+            const turns = this.parseLines(missed, fullPath);
             if (turns.length > 0) this.callback(turns);
           }
 
@@ -191,14 +198,14 @@ class ChatSessionWatcher implements vscode.Disposable {
       this.fileOffsets.set(filePath, allLines.length);
       this.saveOffsets(); // persist after every advance
 
-      const turns = this.parseLines(newLines);
+      const turns = this.parseLines(newLines, filePath);
       if (turns.length > 0) {
         this.callback(turns);
       }
     } catch { /* file might be locked */ }
   }
 
-  private parseLines(lines: string[]): ChatTurn[] {
+  private parseLines(lines: string[], filePath = ""): ChatTurn[] {
     const turns: ChatTurn[] = [];
     const now = Date.now();
 
@@ -210,27 +217,16 @@ class ChatSessionWatcher implements vscode.Disposable {
         continue;
       }
 
-      // kind=1 with k=["inputState","inputText"]: user typed a message
-      if (obj.kind === 1) {
-        const k = obj.k as string[] | undefined;
-        if (
-          Array.isArray(k) &&
-          k[0] === "inputState" &&
-          k[1] === "inputText" &&
-          typeof obj.v === "string" &&
-          obj.v.trim().length > 2
-        ) {
-          turns.push({ role: "user", text: obj.v.trim(), timestamp: now });
-        }
-        continue;
-      }
+      // kind=1 with k=["inputState","inputText"] fires on EVERY KEYSTROKE — skip it.
+      // The final sent message is captured via kind=2 k=["requests"] below.
+      if (obj.kind === 1) continue;
 
       // kind=2 with k=["requests",N,"response"]: AI response
       if (obj.kind === 2) {
         const k = obj.k as unknown[] | undefined;
         if (!Array.isArray(k)) continue;
 
-        // New request added: k=["requests"] with message.text
+        // New request added: k=["requests"] with message.text — the sent user message
         if (k.length === 1 && k[0] === "requests" && Array.isArray(obj.v)) {
           const reqs = obj.v as Record<string, unknown>[];
           for (const req of reqs) {
@@ -244,7 +240,7 @@ class ChatSessionWatcher implements vscode.Disposable {
           continue;
         }
 
-        // Response update: k=["requests",N,"response"]
+        // Response chunk: k=["requests",N,"response"] — debounce per request index
         if (
           k.length === 3 &&
           k[0] === "requests" &&
@@ -252,55 +248,48 @@ class ChatSessionWatcher implements vscode.Disposable {
           k[2] === "response" &&
           Array.isArray(obj.v)
         ) {
+          const reqIndex = k[1] as number;
+          const bufferKey = `${filePath}:${reqIndex}`;
+
           const items = obj.v as Record<string, unknown>[];
-          // Collect text from response items (kind="?" = markdown text, "thinking" = reasoning)
           const textParts: string[] = [];
           for (const item of items) {
             if (!item || typeof item !== "object") continue;
-            // The main text content items have kind undefined or kind="?"
-            // They contain a `value` or `text` field with the actual content
             const val =
               (typeof item.value === "string" ? item.value : null) ??
               (typeof item.text === "string" ? item.text : null);
-            if (val && val.trim()) {
-              textParts.push(val.trim());
-            }
+            if (val && val.trim()) textParts.push(val.trim());
           }
+
           if (textParts.length > 0) {
             const combined = textParts.join("\n").slice(0, 2000);
-            turns.push({ role: "assistant", text: combined, timestamp: now });
+            const existing = this.responseBuffer.get(bufferKey);
+
+            // Cancel previous timer and update with latest (most complete) text
+            if (existing) clearTimeout(existing.timer);
+
+            const timer = setTimeout(() => {
+              const entry = this.responseBuffer.get(bufferKey);
+              if (entry) {
+                this.responseBuffer.delete(bufferKey);
+                this.callback([{ role: "assistant", text: entry.text, timestamp: entry.timestamp }]);
+              }
+            }, 1000);
+
+            this.responseBuffer.set(bufferKey, { text: combined, timer, timestamp: now });
           }
           continue;
         }
       }
     }
 
-    return this.deduplicateUserMessages(turns);
-  }
-
-  /**
-   * VS Code writes both kind=1 (inputText) and kind=2 (requests[].message.text)
-   * for the same user message. Deduplicate by keeping only the kind=2 version
-   * (it's more complete and has a timestamp).
-   */
-  private deduplicateUserMessages(turns: ChatTurn[]): ChatTurn[] {
-    const requestTexts = new Set(
-      turns
-        .filter((t) => t.role === "user")
-        .map((t) => t.text.slice(0, 100).toLowerCase()),
-    );
-
-    // Keep all assistant turns + user turns that aren't near-duplicates
-    const seen = new Set<string>();
-    return turns.filter((t) => {
-      const key = `${t.role}:${t.text.slice(0, 100).toLowerCase()}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
+    return turns;
   }
 
   dispose(): void {
+    // Cancel any pending debounced AI response timers
+    this.responseBuffer.forEach((entry) => clearTimeout(entry.timer));
+    this.responseBuffer.clear();
     if (this.saveTimer) clearTimeout(this.saveTimer);
     this.saveOffsets();
     this.watchers.forEach((w) => w.close());
@@ -512,7 +501,7 @@ export class ConversationCapture implements vscode.Disposable {
     );
   }
 
-  /** Drain the buffer, build a summary, upload + refresh instructions. */
+  /** Drain the buffer, send raw events to server for AI summarization + embedding. */
   private async flush(): Promise<void> {
     if (this.buffer.length === 0) return;
 
@@ -521,30 +510,74 @@ export class ConversationCapture implements vscode.Disposable {
     if (!isAuth || !slug) return;
 
     const events = this.buffer.splice(0);
-    const summary = this.buildSummary(events);
-    if (!summary) return;
 
-    // Upload conversation log entry (fire-and-forget)
+    // Convert to the structured event format the server expects
+    const smartEvents = this.toSmartEvents(events);
+    if (smartEvents.length === 0) return;
+
+    // Send raw events to server — it handles AI summarization, embedding, and dedup
     this.api
-      .logConversation({
-        content: summary,
+      .logSmartConversation({
+        events: smartEvents,
         projectSlug: slug,
-        type: "tool_call",
       })
-      .catch(() => {});
+      .catch(() => {
+        // Fallback: if smart endpoint fails, use basic logConversation
+        const fallbackSummary = this.buildFallbackSummary(events);
+        if (fallbackSummary) {
+          this.api
+            .logConversation({
+              content: fallbackSummary,
+              projectSlug: slug,
+              type: "tool_call",
+            })
+            .catch(() => {});
+        }
+      });
 
     // Refresh instruction files so the AI gets latest context
     this.syncDynamic?.().catch(() => {});
   }
 
-  private buildSummary(events: CaptureEvent[]): string | null {
+  /**
+   * Convert internal CaptureEvents to the structured format the server expects
+   * for AI summarization. Filters out noise (editor_focus unless it's all we have).
+   */
+  private toSmartEvents(events: CaptureEvent[]): Array<{
+    type: string;
+    text?: string;
+    path?: string;
+    name?: string;
+    timestamp?: number;
+  }> {
+    const meaningful = events.filter(
+      (e) => e.type !== "editor_focus" || events.length <= 3,
+    );
+
+    if (meaningful.length === 0) return [];
+
+    return meaningful.map((e) => {
+      const result: { type: string; text?: string; path?: string; name?: string; timestamp?: number } = {
+        type: e.type,
+        timestamp: e.timestamp,
+      };
+      if (e.data.text) result.text = String(e.data.text);
+      if (e.data.path) result.path = String(e.data.path);
+      if (e.data.name) result.name = String(e.data.name);
+      if (e.data.prompt) result.text = String(e.data.prompt);
+      if (e.data.input) result.text = String(e.data.input);
+      return result;
+    });
+  }
+
+  /** Fallback plain-text summary if the smart endpoint is unavailable. */
+  private buildFallbackSummary(events: CaptureEvent[]): string | null {
     const toolCalls = events.filter((e) => e.type === "tool_call");
     const chatTurns = events.filter((e) => e.type === "chat_turn");
     const fileSaves = events.filter((e) => e.type === "file_save");
     const userMsgs = events.filter((e) => e.type === "user_message");
     const aiResps = events.filter((e) => e.type === "ai_response");
 
-    // Only flush if something meaningful happened
     if (
       toolCalls.length === 0 &&
       chatTurns.length === 0 &&
@@ -557,7 +590,6 @@ export class ConversationCapture implements vscode.Disposable {
 
     const parts: string[] = [];
 
-    // Conversation turns are the most valuable signal
     if (userMsgs.length > 0) {
       const prompts = userMsgs.map(
         (e) => `"${(e.data.text as string).slice(0, 120)}"`,
@@ -566,25 +598,10 @@ export class ConversationCapture implements vscode.Disposable {
     }
 
     if (aiResps.length > 0) {
-      // Summarize AI responses (take just the first ~200 chars of each)
       const summaries = aiResps.map(
         (e) => (e.data.text as string).slice(0, 200),
       );
       parts.push(`ai: ${summaries.join(" | ").slice(0, 600)}`);
-    }
-
-    if (chatTurns.length > 0) {
-      const cmds = chatTurns.map((e) => {
-        const cmd = e.data.command as string;
-        const prompt = e.data.prompt as string;
-        return cmd !== "freeform" ? `/${cmd}` : `"${prompt.slice(0, 80)}"`;
-      });
-      parts.push(`@remb: ${cmds.join(", ")}`);
-    }
-
-    if (toolCalls.length > 0) {
-      const names = [...new Set(toolCalls.map((e) => e.data.name as string))];
-      parts.push(`tools: ${names.join(", ")}`);
     }
 
     if (fileSaves.length > 0) {

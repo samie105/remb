@@ -422,6 +422,14 @@ function createApiClient(opts = {}) {
     /** POST /api/cli/conversations — log a conversation entry */
     logConversation(params) {
       return request("POST", "/api/cli/conversations", params);
+    },
+    /** GET /api/cli/conversations/search — semantic search conversation history */
+    searchConversations(params) {
+      const search = { q: params.query };
+      if (params.projectSlug) search.projectSlug = params.projectSlug;
+      if (params.tags?.length) search.tags = params.tags.join(",");
+      if (params.limit) search.limit = String(params.limit);
+      return request("GET", "/api/cli/conversations/search", void 0, search);
     }
   };
 }
@@ -2320,7 +2328,8 @@ Title: ${result.title}` }
     {
       content: z.string().describe("Summary of what was discussed or accomplished"),
       projectSlug: z.string().optional().describe("Associate with a project (uses default project if omitted)"),
-      type: z.string().optional().describe("Entry type: summary, decision, progress, note (default: summary)")
+      type: z.string().optional().describe("Entry type: summary, decision, progress, note, conversation (default: summary)"),
+      tags: z.array(z.string()).optional().describe("Tags for categorization and search (e.g., ['auth', 'bug-fix'])")
     },
     async (params) => {
       const slug = params.projectSlug ?? projectSlug;
@@ -2328,14 +2337,16 @@ Title: ${result.title}` }
         const result = await client.logConversation({
           content: params.content,
           projectSlug: slug,
-          type: params.type ?? "summary"
+          type: params.type ?? "summary",
+          tags: params.tags
         });
+        const dedup = result.deduplicated ? " (merged with existing similar entry)" : "";
         return {
           content: [
             {
               type: "text",
               text: `Conversation logged (ID: ${result.id})
-Created: ${result.created_at}`
+Created: ${result.created_at}${dedup}`
             }
           ]
         };
@@ -2368,6 +2379,43 @@ Created: ${result.created_at}`
         const formatted = entries.map((e) => `[${e.created_at.slice(0, 10)}] ${e.type}: ${e.content}`).join("\n\n---\n\n");
         return {
           content: [{ type: "text", text: `${total} conversation entries:
+
+${formatted}` }]
+        };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : "Unknown"}` }] };
+      }
+    }
+  );
+  server.tool(
+    "conversation_search",
+    "Semantic search across conversation history. Find past discussions by meaning, not just keywords.",
+    {
+      query: z.string().describe("Natural language search query"),
+      projectSlug: z.string().optional().describe("Filter by project (uses default project if omitted)"),
+      tags: z.array(z.string()).optional().describe("Filter by tags"),
+      limit: z.number().optional().describe("Max results to return (default 10)")
+    },
+    async (params) => {
+      const slug = params.projectSlug ?? projectSlug;
+      try {
+        const { results } = await client.searchConversations({
+          query: params.query,
+          projectSlug: slug,
+          tags: params.tags,
+          limit: params.limit ?? 10
+        });
+        if (results.length === 0) {
+          return { content: [{ type: "text", text: "No matching conversations found." }] };
+        }
+        const formatted = results.map((r) => {
+          const tags = r.tags?.length ? ` [${r.tags.join(", ")}]` : "";
+          const proj = r.project_slug ? ` (${r.project_slug})` : "";
+          return `[${r.created_at.slice(0, 10)}] ${(r.similarity * 100).toFixed(0)}% match${proj}${tags}
+${r.content}`;
+        }).join("\n\n---\n\n");
+        return {
+          content: [{ type: "text", text: `${results.length} results:
 
 ${formatted}` }]
         };
@@ -3050,12 +3098,13 @@ function checkGitStatus() {
 import { Command as Command13 } from "commander";
 import chalk15 from "chalk";
 import ora10 from "ora";
-var historyCommand = new Command13("history").description("View conversation history \u2014 what AI discussed and did across sessions").option("-d, --date <date>", "Filter by specific date (YYYY-MM-DD)").option("--from <date>", "Start date filter (YYYY-MM-DD)").option("--to <date>", "End date filter (YYYY-MM-DD)").option("-l, --limit <n>", "Max entries to show", "20").option("-p, --project <slug>", "Filter by project slug").option("--format <fmt>", "Output format: timeline (default), markdown, json", "timeline").addHelpText(
+var historyCommand = new Command13("history").description("View conversation history \u2014 what AI discussed and did across sessions").option("-s, --search <query>", "Semantic search across conversation history").option("-d, --date <date>", "Filter by specific date (YYYY-MM-DD)").option("--from <date>", "Start date filter (YYYY-MM-DD)").option("--to <date>", "End date filter (YYYY-MM-DD)").option("-l, --limit <n>", "Max entries to show", "20").option("-p, --project <slug>", "Filter by project slug").option("--format <fmt>", "Output format: timeline (default), markdown, json", "timeline").addHelpText(
   "after",
   `
 Examples:
   $ remb history
   $ remb history -d 2025-01-15
+  $ remb history --search "authentication flow"
   $ remb history --from 2025-01-01 --to 2025-01-31 --format json`
 ).action(async (opts) => {
   if (opts.date) validateDateFormat(opts.date, "--date");
@@ -3071,6 +3120,38 @@ Examples:
   try {
     const client = createApiClient();
     const projectSlug = opts.project;
+    if (opts.search) {
+      spinner.text = "Searching conversations...";
+      const { results } = await client.searchConversations({
+        query: opts.search,
+        projectSlug,
+        limit
+      });
+      spinner.stop();
+      if (results.length === 0) {
+        console.log(chalk15.dim("  No matching conversations found."));
+        return;
+      }
+      if (opts.format === "json") {
+        console.log(JSON.stringify(results, null, 2));
+        return;
+      }
+      console.log();
+      console.log(chalk15.bold(`  Search results for "${opts.search}"`));
+      console.log(chalk15.dim(`  ${results.length} matches
+`));
+      for (const r of results) {
+        const date = chalk15.dim(r.created_at.slice(0, 10));
+        const time = chalk15.dim(r.created_at.slice(11, 16));
+        const sim = chalk15.green(`${(r.similarity * 100).toFixed(0)}%`);
+        const tags = r.tags?.length ? chalk15.blue(` [${r.tags.join(", ")}]`) : "";
+        const proj = r.project_slug ? chalk15.dim(` (${r.project_slug})`) : "";
+        console.log(`  ${date} ${time} ${sim}${proj}${tags}`);
+        console.log(`    ${r.content.slice(0, 200)}${r.content.length > 200 ? "..." : ""}`);
+        console.log();
+      }
+      return;
+    }
     let startDate;
     let endDate;
     if (opts.date) {

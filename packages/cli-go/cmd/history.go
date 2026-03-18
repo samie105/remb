@@ -6,9 +6,9 @@ import (
 	"os"
 	"sort"
 
+	"github.com/spf13/cobra"
 	"github.com/useremb/remb/internal/api"
 	"github.com/useremb/remb/internal/config"
-	"github.com/spf13/cobra"
 )
 
 var (
@@ -18,6 +18,7 @@ var (
 	histLimit   int
 	histProject string
 	histFormat  string
+	histSearch  string
 )
 
 var historyCmd = &cobra.Command{
@@ -33,6 +34,7 @@ func init() {
 	historyCmd.Flags().IntVarP(&histLimit, "limit", "l", 20, "Max entries to show")
 	historyCmd.Flags().StringVarP(&histProject, "project", "p", "", "Filter by project slug")
 	historyCmd.Flags().StringVar(&histFormat, "format", "timeline", "Output format: timeline, markdown, json")
+	historyCmd.Flags().StringVarP(&histSearch, "search", "s", "", "Semantic search query")
 }
 
 func runHistory(cmd *cobra.Command, args []string) error {
@@ -48,6 +50,45 @@ func runHistory(cmd *cobra.Command, args []string) error {
 		if cfg != nil && cfg.Config.Project != "" {
 			projectSlug = cfg.Config.Project
 		}
+	}
+
+	// Search mode
+	if histSearch != "" {
+		params := map[string]string{}
+		if projectSlug != "" {
+			params["projectSlug"] = projectSlug
+		}
+		if histLimit > 0 {
+			params["limit"] = fmt.Sprintf("%d", histLimit)
+		}
+
+		result, err := client.SearchConversations(histSearch, params)
+		if err != nil {
+			handleAPIError(err)
+			return nil
+		}
+
+		if histFormat == "json" {
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			return enc.Encode(result.Entries)
+		}
+
+		if len(result.Entries) == 0 {
+			fmt.Fprintf(os.Stderr, "  %sNo results for %q%s\n", "\033[2m", histSearch, "\033[0m")
+			return nil
+		}
+
+		fmt.Fprintf(os.Stderr, "\n  %sSearch results for %q%s\n\n", "\033[1m", histSearch, "\033[0m")
+		for _, e := range result.Entries {
+			date := e.CreatedAt
+			if len(date) >= 16 {
+				date = date[:16]
+			}
+			sim := fmt.Sprintf("%.0f%%", e.Similarity*100)
+			fmt.Fprintf(os.Stderr, "  %s\033[33m%s\033[0m %s\n    %s\n\n", date, sim, e.ProjectSlug, truncate(e.Content, 200))
+		}
+		return nil
 	}
 
 	// Build query params

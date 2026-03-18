@@ -579,28 +579,39 @@ export interface Database {
           id: string;
           user_id: string;
           project_id: string | null;
+          project_slug: string | null;
           session_id: string;
           type: string;
           content: string;
+          tags: string[];
           metadata: Json;
           source: string;
+          embedding: string | null;
+          is_summarized: boolean;
           created_at: string;
         };
         Insert: {
           id?: string;
           user_id: string;
           project_id?: string | null;
+          project_slug?: string | null;
           session_id: string;
           type?: string;
           content: string;
+          tags?: string[];
           metadata?: Json;
           source?: string;
+          embedding?: string | null;
+          is_summarized?: boolean;
           created_at?: string;
         };
         Update: {
           content?: string;
+          tags?: string[];
           metadata?: Json;
           type?: string;
+          embedding?: string | null;
+          is_summarized?: boolean;
         };
         Relationships: [
           {
@@ -789,6 +800,43 @@ export interface Database {
           memory_b_id: string;
           title_a: string;
           title_b: string;
+          similarity: number;
+        }[];
+      };
+      search_conversations: {
+        Args: {
+          p_user_id: string;
+          query_embedding: string;
+          match_count?: number;
+          p_project_slug?: string | null;
+          p_tags?: string[] | null;
+          similarity_threshold?: number;
+        };
+        Returns: {
+          id: string;
+          project_id: string | null;
+          project_slug: string | null;
+          session_id: string;
+          type: string;
+          content: string;
+          tags: string[];
+          metadata: Json;
+          source: string;
+          created_at: string;
+          similarity: number;
+        }[];
+      };
+      find_duplicate_conversation: {
+        Args: {
+          p_user_id: string;
+          p_project_slug: string | null;
+          query_embedding: string;
+          threshold?: number;
+          lookback_hours?: number;
+        };
+        Returns: {
+          id: string;
+          content: string;
           similarity: number;
         }[];
       };

@@ -440,6 +440,7 @@ export function createApiClient(opts: ClientOptions = {}) {
       content: string;
       projectSlug?: string;
       type?: string;
+      tags?: string[];
       metadata?: Record<string, unknown>;
       sessionId?: string;
     }) {
@@ -447,7 +448,33 @@ export function createApiClient(opts: ClientOptions = {}) {
         logged: boolean;
         id: string;
         created_at: string;
+        deduplicated?: boolean;
       }>("POST", "/api/cli/conversations", params);
+    },
+
+    /** GET /api/cli/conversations/search — semantic search conversation history */
+    searchConversations(params: {
+      query: string;
+      projectSlug?: string;
+      tags?: string[];
+      limit?: number;
+    }) {
+      const search: Record<string, string> = { q: params.query };
+      if (params.projectSlug) search.projectSlug = params.projectSlug;
+      if (params.tags?.length) search.tags = params.tags.join(",");
+      if (params.limit) search.limit = String(params.limit);
+      return request<{
+        results: Array<{
+          id: string;
+          content: string;
+          type: string;
+          source: string;
+          tags: string[] | null;
+          project_slug: string | null;
+          similarity: number;
+          created_at: string;
+        }>;
+      }>("GET", "/api/cli/conversations/search", undefined, search);
     },
   };
 }

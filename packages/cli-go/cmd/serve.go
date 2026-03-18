@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/spf13/cobra"
 	"github.com/useremb/remb/internal/api"
 	"github.com/useremb/remb/internal/config"
 	"github.com/useremb/remb/internal/output"
-	"github.com/spf13/cobra"
 )
 
 var serveProject string
@@ -196,6 +196,77 @@ func buildToolDefs() []mcpToolDef {
 				},
 			},
 		},
+		{
+			Name:        "conversation_log",
+			Description: "Record what was discussed or accomplished in this coding session. Call after completing tasks and at session end.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"content": map[string]interface{}{
+						"type":        "string",
+						"description": "Summary of what was discussed or accomplished",
+					},
+					"project_slug": map[string]interface{}{
+						"type":        "string",
+						"description": "Project slug (uses default if omitted)",
+					},
+					"tags": map[string]interface{}{
+						"type":        "array",
+						"items":       map[string]interface{}{"type": "string"},
+						"description": "Tags for categorization (e.g. bug-fix, feature, refactor)",
+					},
+					"type": map[string]interface{}{
+						"type":        "string",
+						"description": "Entry type: summary (default), tool_call, milestone, conversation",
+					},
+				},
+				"required": []string{"content"},
+			},
+		},
+		{
+			Name:        "conversation_history",
+			Description: "Load recent conversation history to catch up on prior sessions.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"project_slug": map[string]interface{}{
+						"type":        "string",
+						"description": "Filter by project slug (uses default if omitted)",
+					},
+					"limit": map[string]interface{}{
+						"type":        "number",
+						"description": "Max entries to return (default 20)",
+					},
+				},
+			},
+		},
+		{
+			Name:        "conversation_search",
+			Description: "Semantic search across conversation history. Find past discussions by meaning, not just keywords.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"query": map[string]interface{}{
+						"type":        "string",
+						"description": "Natural language search query",
+					},
+					"project_slug": map[string]interface{}{
+						"type":        "string",
+						"description": "Filter by project slug",
+					},
+					"tags": map[string]interface{}{
+						"type":        "array",
+						"items":       map[string]interface{}{"type": "string"},
+						"description": "Filter by tags",
+					},
+					"limit": map[string]interface{}{
+						"type":        "number",
+						"description": "Max results (default 10)",
+					},
+				},
+				"required": []string{"query"},
+			},
+		},
 	}
 }
 
@@ -213,6 +284,12 @@ func handleToolCall(client *api.Client, defaultProject string, params json.RawMe
 		return handleSaveContext(client, defaultProject, call.Arguments)
 	case "get_context":
 		return handleGetContext(client, defaultProject, call.Arguments)
+	case "conversation_log":
+		return handleConversationLog(client, defaultProject, call.Arguments)
+	case "conversation_history":
+		return handleConversationHistory(client, defaultProject, call.Arguments)
+	case "conversation_search":
+		return handleConversationSearch(client, defaultProject, call.Arguments)
 	default:
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Error: Unknown tool %q", call.Name)}}}
 	}
@@ -300,4 +377,146 @@ func handleGetContext(client *api.Client, defaultProject string, args json.RawMe
 
 func textResult(text string) mcpToolResult {
 	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: text}}}
+}
+
+func handleConversationLog(client *api.Client, defaultProject string, args json.RawMessage) mcpToolResult {
+	var params struct {
+		Content     string   `json:"content"`
+		ProjectSlug string   `json:"project_slug"`
+		Tags        []string `json:"tags"`
+		Type        string   `json:"type"`
+	}
+	if err := json.Unmarshal(args, &params); err != nil {
+		return textResult("Error: Invalid arguments — " + err.Error())
+	}
+	if params.Content == "" {
+		return textResult("Error: content is required")
+	}
+
+	slug := params.ProjectSlug
+	if slug == "" {
+		slug = defaultProject
+	}
+
+	req := api.LogConversationRequest{
+		Content:     params.Content,
+		ProjectSlug: slug,
+		Tags:        params.Tags,
+		Type:        params.Type,
+	}
+
+	result, err := client.LogConversation(req)
+	if err != nil {
+		return textResult("Error logging conversation: " + err.Error())
+	}
+
+	msg := fmt.Sprintf("Logged conversation entry.\nID: %s\nCreated: %s", result.ID, result.CreatedAt)
+	if result.Deduplicated {
+		msg += "\n(Merged with existing similar entry)"
+	}
+	return textResult(msg)
+}
+
+func handleConversationHistory(client *api.Client, defaultProject string, args json.RawMessage) mcpToolResult {
+	var params struct {
+		ProjectSlug string `json:"project_slug"`
+		Limit       int    `json:"limit"`
+	}
+	if err := json.Unmarshal(args, &params); err != nil {
+		return textResult("Error: Invalid arguments — " + err.Error())
+	}
+
+	slug := params.ProjectSlug
+	if slug == "" {
+		slug = defaultProject
+	}
+
+	qp := map[string]string{}
+	if slug != "" {
+		qp["projectSlug"] = slug
+	}
+	if params.Limit > 0 {
+		qp["limit"] = fmt.Sprintf("%d", params.Limit)
+	}
+
+	result, err := client.GetConversationHistory(qp)
+	if err != nil {
+		return textResult("Error fetching history: " + err.Error())
+	}
+
+	if len(result.Entries) == 0 {
+		return textResult("No conversation history found.")
+	}
+
+	text := fmt.Sprintf("Found %d entries (showing %d):\n\n", result.Total, len(result.Entries))
+	for _, e := range result.Entries {
+		date := e.CreatedAt
+		if len(date) >= 16 {
+			date = date[:16]
+		}
+		text += fmt.Sprintf("**%s** [%s] %s\n", date, e.Type, e.Content)
+		if len(e.Tags) > 0 {
+			text += fmt.Sprintf("  tags: %v\n", e.Tags)
+		}
+		text += "\n"
+	}
+	return textResult(text)
+}
+
+func handleConversationSearch(client *api.Client, defaultProject string, args json.RawMessage) mcpToolResult {
+	var params struct {
+		Query       string   `json:"query"`
+		ProjectSlug string   `json:"project_slug"`
+		Tags        []string `json:"tags"`
+		Limit       int      `json:"limit"`
+	}
+	if err := json.Unmarshal(args, &params); err != nil {
+		return textResult("Error: Invalid arguments — " + err.Error())
+	}
+	if params.Query == "" {
+		return textResult("Error: query is required")
+	}
+
+	slug := params.ProjectSlug
+	if slug == "" {
+		slug = defaultProject
+	}
+
+	qp := map[string]string{}
+	if slug != "" {
+		qp["projectSlug"] = slug
+	}
+	if params.Limit > 0 {
+		qp["limit"] = fmt.Sprintf("%d", params.Limit)
+	}
+	if len(params.Tags) > 0 {
+		tagStr := ""
+		for i, t := range params.Tags {
+			if i > 0 {
+				tagStr += ","
+			}
+			tagStr += t
+		}
+		qp["tags"] = tagStr
+	}
+
+	result, err := client.SearchConversations(params.Query, qp)
+	if err != nil {
+		return textResult("Error searching conversations: " + err.Error())
+	}
+
+	if len(result.Entries) == 0 {
+		return textResult(fmt.Sprintf("No conversations found matching %q.", params.Query))
+	}
+
+	text := fmt.Sprintf("Found %d results for %q:\n\n", len(result.Entries), params.Query)
+	for _, e := range result.Entries {
+		date := e.CreatedAt
+		if len(date) >= 16 {
+			date = date[:16]
+		}
+		sim := fmt.Sprintf("%.0f%%", e.Similarity*100)
+		text += fmt.Sprintf("**%s** [%s match] %s\n%s\n\n", date, sim, e.ProjectSlug, e.Content)
+	}
+	return textResult(text)
 }
