@@ -1,7 +1,7 @@
 <!-- remb-dynamic-context -->
 # Remb — Live Project Context
 
-> **Project**: context-management | **Refreshed**: 2026-03-18T14:04
+> **Project**: context-management | **Refreshed**: 2026-03-18T15:21
 > This file is auto-generated and gitignored. It injects real project context into every prompt.
 > For the full context bundle, call `remb_loadProjectContext`.
 
@@ -67,36 +67,33 @@ Directory layout:
 
 ## Current Session Activity
 
-- `13:52:35` saved `app/landing/page.tsx`
-- `13:53:05` 💬 **user**: update the middle ware to use / as the landing page and redirect /landing to it
-- `13:53:06` 🤖 **ai**: Build passes — `/landing` is compiled as a static page.
-All done. Here's what changed:
+- `15:12:07` saved `app/landing/_components/install.tsx`
+- `15:12:32` saved `app/landing/_components/cta-footer.tsx`
+- `15:13:43` 🤖 **ai**: Now rewriting the main
+as a slim orchestrator — removing the broken pinned How It Works animation and adding proper
+animation:
+- `15:14:55` saved `app/landing/page.tsx`
+- `15:15:47` saved `app/landing/_components/how-it-works.tsx`
+- `15:15:59` saved `app/landing/_components/nav.tsx`
+- `15:15:59` saved `app/landing/page.tsx`
+- `15:15:59` saved `app/landing/_components/data.ts`
+- `15:15:59` saved `app/landing/_components/hero.tsx`
+- `15:15:59` saved `app/landing/_components/shared.tsx`
+- `15:15:59` saved `app/landing/_components/problem.tsx`
+- `15:15:59` saved `app/landing/_components/mcp.tsx`
+- `15:15:59` saved `app/landing/_components/how-it-works.tsx`
+- `15:15:59` saved `app/landing/_components/cta-footer.tsx`
+- `15:15:59` saved `app/landing/_components/cli.tsx`
+- `15:15:59` saved `app/landing/_components/install.tsx`
+- `15:15:59` saved `app/landing/_components/features.tsx`
+- `15:16:00` 🤖 **ai**: Just lint suggestions on how-it-works.tsx. Let me fix those and check remaining files:
+```
+```
+- `15:17:04` 🤖 **ai**: Zero errors. Now build:
+- `15:19:23` 🤖 **ai**: Build passes. Here's what was done:
 
-**Landing page access** —
-: Unauthenticated users now redirect to `/landing` instead of `/auth`. No middleware w
-- `13:54:05` 💬 **user**: update the middle ware to use / as the landing page and redirect /landing to it
-- `13:54:17` saved `middleware.ts`
-- `13:55:02` saved `app/page.tsx`
-- `13:55:05` 🤖 **ai**: The landing page is 856 lines — I'll create a middleware that redirects `/landing` → `/`, then update
-to render the landing page directly (instead of redirecting to `/landing`), and make
-a simple redi
-- `13:55:16` saved `middleware.ts`
-- `13:55:16` saved `app/page.tsx`
-- `13:55:20` 🤖 **ai**: Done. Here's the routing now:
-
-- **`/`** — server checks auth: authenticated → `/dashboard`, unauthenticated → renders the landing page directly
-- **`/landing`** — middleware 301 redirects to `/`
-- **
-- `13:56:04` 💬 **user**: i still get redirected to the dashboard if i go to /
-- `13:56:21` saved `app/page.tsx`
-- `13:57:08` saved `app/page.tsx`
-- `13:57:09` 🤖 **ai**: The user is saying they still get redirected to the dashboard when going to `/`. This implies they're authenticated (have a session), so the server-side redirect to `/dashboard` fires. The user wants 
-- `13:59:09` 💬 **user**: why are you using a gradients why can't you keep the entire landing page simple, use the project
-- `14:00:06` 💬 **user**: why are you using a gradients why can't you keep the entire landing page simple, use the projects variable styling to stick to the theme color, read t
-- `14:01:06` 💬 **user**: why are you using a gradients why can't you keep the entire landing page simple, use the projects variable styling to stick to the theme color, read t
-- `14:02:06` 💬 **user**: why are you using a gradients why can't you keep the entire landing page simple, use the projects variable styling to stick to the theme color, read t
-- `14:03:06` 💬 **user**: why are you using a gradients why can't you keep the entire landing page simple, use the projects variable styling to stick to the theme color, read t
-- `14:04:06` 💬 **user**: why are you using a gradients why can't you keep the entire landing page simple, use the projects variable styling to stick to the theme color, read t
+**How It Works fix** — The broken pinned-scroll approach (`absolute inset-0` +
+collapsed panels to zero height) was replaced with a vertical timeline layout. Each 
 
 ## Project Context Summary
 
