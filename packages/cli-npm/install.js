@@ -88,7 +88,6 @@ async function main() {
       console.warn(`remb: install manually: https://github.com/${REPO}/releases/tag/v${VERSION}`);
     }
   }
-  }
 }
 
 main();
