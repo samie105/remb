@@ -9,9 +9,11 @@ const withPWA = withPWAInit({
   aggressiveFrontEndNavCaching: true,
 });
 
-const nextConfig = {
-  serverActions: {
-    bodySizeLimit: "10mb",
+const nextConfig: NextConfig = {
+  experimental: {
+    serverActions: {
+      bodySizeLimit: "10mb",
+    },
   },
   turbopack: {},
   images: {
@@ -39,6 +41,6 @@ const nextConfig = {
       ],
     };
   },
-} satisfies Omit<NextConfig, "serverActions"> & { serverActions?: { bodySizeLimit?: string } };
+} satisfies NextConfig;
 
 export default withPWA(nextConfig);

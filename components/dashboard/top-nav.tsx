@@ -75,15 +75,15 @@ export function TopNav({ user }: { user: DashboardUser }) {
     <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center border-b border-border/40 bg-background/80 backdrop-blur-xl supports-backdrop-filter:bg-background/60">
       <div className="flex w-full items-center justify-between gap-2 px-4">
         {/* Left: trigger + project switcher + breadcrumbs */}
-        <div className="flex items-center gap-2">
-          <SidebarTrigger className="-ml-1" />
-          <Separator orientation="vertical" className="mr-1 h-4" />
+        <div className="flex min-w-0 items-center gap-2">
+          <SidebarTrigger className="-ml-1 shrink-0" />
+          <Separator orientation="vertical" className="mr-1 h-4 shrink-0" />
 
           <ProjectSwitcher />
 
-          <Separator orientation="vertical" className="mx-1 h-4" />
+          <Separator orientation="vertical" className="mx-1 h-4 hidden sm:block shrink-0" />
 
-          <Breadcrumb>
+          <Breadcrumb className="hidden sm:block">
             <BreadcrumbList>
               {crumbs.map((crumb, index) => {
                 const isLast = index === crumbs.length - 1;

@@ -97,30 +97,18 @@ const mainNavItems = [
     badge: "New",
     projectAware: true, // becomes /dashboard/[slug]/memory when project active
   },
-  {
-    label: "Presentation",
-    href: "/dashboard/presentation",
-    icon: Video01Icon,
-    projectAware: true,
-  },
+  // {
+  //   label: "Presentation",
+  //   href: "/dashboard/presentation",
+  //   icon: Video01Icon,
+  //   projectAware: true,
+  // },
 ];
 
 const resourceNavItems = [
-  {
-    label: "API",
-    href: "/dashboard/api",
-    icon: ApiIcon,
-  },
-  {
-    label: "CLI Reference",
-    href: "/dashboard/cli",
-    icon: CommandLineIcon,
-  },
-  {
-    label: "Docs",
-    href: "/dashboard/docs",
-    icon: BookOpen01Icon,
-  },
+  // { label: "API", href: "/dashboard/api", icon: ApiIcon },
+  // { label: "CLI Reference", href: "/dashboard/cli", icon: CommandLineIcon },
+  // { label: "Docs", href: "/dashboard/docs", icon: BookOpen01Icon },
   {
     label: "Settings",
     href: "/dashboard/settings",

@@ -1,22 +1,27 @@
-# remb
+# remb-cli
 
-> CLI for Remb — persistent memory layer for AI coding sessions.
+> Node.js CLI for [Remb](https://useremb.com) — persistent memory layer for AI coding sessions.
 
 ## Install
 
 ```bash
-npm install -g remb
+npm install -g remb-cli
 ```
+
+> **Prefer the Go binary?** It's faster and has zero runtime dependencies:
+> ```bash
+> curl -fsSL https://useremb.com/install.sh | sh
+> ```
 
 ## Quick Start
 
 ```bash
-# 1. Authenticate
-remb login --key remb_your_api_key
+# 1. Authenticate (opens browser for OAuth)
+remb login
 
 # 2. Initialize a project
 cd my-project
-remb init my-project
+remb init
 
 # 3. Save context
 remb save -f auth -c "Implemented PKCE OAuth flow with refresh tokens"
@@ -35,7 +40,7 @@ remb serve
 
 | Command | Description |
 |---------|-------------|
-| `remb login` | Authenticate with your API key |
+| `remb login` | Authenticate via browser OAuth or `--key` |
 | `remb logout` | Remove stored credentials |
 | `remb whoami` | Show authentication status |
 | `remb init` | Initialize project tracking |
@@ -72,9 +77,9 @@ api_key=remb_your_key_here
 
 ## MCP Server
 
-The `remb serve` command starts a Model Context Protocol server over stdio, exposing `save_context` and `get_context` tools to AI assistants.
+The `remb serve` command starts a Model Context Protocol server over stdio, exposing context and memory tools to AI assistants.
 
-Add to your MCP client config (e.g., Claude Desktop):
+Add to your MCP client config (e.g., Claude Desktop, Cursor):
 
 ```json
 {
@@ -86,3 +91,22 @@ Add to your MCP client config (e.g., Claude Desktop):
   }
 }
 ```
+
+Or use the remote SSE server — no local install required:
+
+```json
+{
+  "mcpServers": {
+    "remb": {
+      "url": "https://mcp.useremb.com/sse"
+    }
+  }
+}
+```
+
+## Links
+
+- [Website](https://useremb.com)
+- [GitHub](https://github.com/useremb/remb)
+- [VS Code Extension](https://marketplace.visualstudio.com/items?itemName=remb.remb)
+- [Go CLI (remb-go)](https://www.npmjs.com/package/remb-go)
