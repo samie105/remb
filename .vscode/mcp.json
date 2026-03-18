@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "Remb": {
+      "command": "remb",
+      "args": ["serve"]
+    }
+  }
+}

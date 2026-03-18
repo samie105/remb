@@ -1,0 +1,56 @@
+<!-- remb:start -->
+# Remb — AI Context Management
+
+Project: context-management | API: https://remb.vercel.app
+
+## MANDATORY — Follow These Every Session
+
+1. Session start → call `remb__conversation_history` and `remb__memory_load_context`
+2. After significant work → call `remb__conversation_log`
+3. Before ending → call `remb__conversation_log` with summary
+4. Discoveries → call `remb__memory_create`
+
+### Available MCP Tools
+
+**Memory Management:**
+- `remb__memory_list` — list memories (filter by tier, category, search)
+- `remb__memory_search` — semantic search across all memories
+- `remb__memory_load_context` — load all core + active memories as context
+- `remb__memory_create` — create a new memory
+- `remb__memory_update` — update an existing memory
+- `remb__memory_delete` — delete a memory
+- `remb__memory_promote` — promote a memory to a higher tier
+- `remb__memory_stats` — get memory usage statistics
+- `remb__memory_image_upload` — upload an image to memory
+- `remb__memory_image_list` — list stored images
+
+**Conversation Tracking:**
+- `remb__conversation_log` — record what you discussed or accomplished
+- `remb__conversation_history` — load recent conversation history
+
+**Project & Context:**
+- `remb__projects_list` — list all projects with feature counts
+- `remb__project_get` — get project details, features, and latest scan
+- `remb__context_save` — save a context entry for a feature
+- `remb__context_get` — retrieve context entries (optional feature filter)
+- `remb__context_bundle` — full project context as markdown
+
+**Scanning & Analysis:**
+- `remb__scan_trigger` — trigger a cloud scan
+- `remb__scan_status` — check scan progress
+- `remb__diff_analyze` — analyze a git diff and save extracted changes
+
+**Cross-Project:**
+- `remb__cross_project_search` — search across ALL projects for features, context, and memories
+- `remb__context_bundle` — also works with other project slugs to load another project's full context
+- `remb__memory_create` — create with no project_id to save global preferences that apply everywhere
+
+## Quick Reference
+
+- Starting: conversation_history + memory_load_context
+- Project info: project_get or context_bundle
+- Save knowledge: context_save (feature) or memory_create (general)
+- After changes: scan_trigger or diff_analyze
+- Finishing: conversation_log
+- Reference another project: cross_project_search + context_bundle
+<!-- remb:end -->

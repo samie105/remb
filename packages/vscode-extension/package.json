@@ -1,0 +1,686 @@
+{
+  "name": "remb",
+  "displayName": "Remb",
+  "description": "Persistent memory and context for AI coding sessions — makes your AI remember across conversations",
+  "version": "0.1.0",
+  "publisher": "remb",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/remb-ai/remb"
+  },
+  "engines": {
+    "vscode": "^1.99.0"
+  },
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "keywords": [
+    "ai",
+    "memory",
+    "context",
+    "copilot",
+    "mcp"
+  ],
+  "icon": "icon.png",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "package": "vsce package --no-dependencies",
+    "publish": "vsce publish --no-dependencies",
+    "lint": "tsc --noEmit"
+  },
+  "contributes": {
+    "chatParticipants": [
+      {
+        "id": "remb.copilot",
+        "name": "remb",
+        "fullName": "Remb — AI Memory",
+        "description": "Persistent memory for your codebase. Save context, recall decisions, and manage project knowledge across AI sessions.",
+        "isSticky": true,
+        "commands": [
+          {
+            "name": "recall",
+            "description": "Load project context and memories for the current session"
+          },
+          {
+            "name": "save",
+            "description": "Save context about a feature or decision"
+          },
+          {
+            "name": "memory",
+            "description": "Create or search persistent memories"
+          },
+          {
+            "name": "scan",
+            "description": "Trigger a cloud scan of the project"
+          },
+          {
+            "name": "history",
+            "description": "View conversation history across sessions"
+          }
+        ]
+      }
+    ],
+    "languageModelTools": [
+      {
+        "name": "remb_loadProjectContext",
+        "displayName": "Remb: Load Project Context",
+        "description": "MANDATORY — Call this at the START of every session. Loads the full project context bundle including memories, features, and tech stack. Without this, you have no context about the project.",
+        "tags": [
+          "remb",
+          "context",
+          "memory"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "projectSlug": {
+              "type": "string",
+              "description": "Project slug (auto-detected from .remb.yml if omitted)"
+            }
+          }
+        },
+        "canBeReferencedInPrompt": true,
+        "userDescription": "Loads the full project context from Remb — memories, features, tech stack — as a structured document."
+      },
+      {
+        "name": "remb_conversationHistory",
+        "displayName": "Remb: Load Conversation History",
+        "description": "MANDATORY — Call this at the START of every session alongside remb_loadProjectContext. Loads what was discussed, what was built, and what decisions were made in prior sessions. Without this, you will repeat work or miss context.",
+        "tags": [
+          "remb",
+          "conversation",
+          "history"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "projectSlug": {
+              "type": "string",
+              "description": "Project slug (auto-detected if omitted)"
+            },
+            "limit": {
+              "type": "number",
+              "description": "Max entries to return (default: 20)"
+            }
+          }
+        },
+        "canBeReferencedInPrompt": true,
+        "userDescription": "Loads what was discussed and accomplished in prior AI sessions."
+      },
+      {
+        "name": "remb_conversationLog",
+        "displayName": "Remb: Log Conversation",
+        "description": "MANDATORY — Call after completing significant work AND before ending the session. Records what was discussed and accomplished so the next session can pick up where you left off. Failure to call this causes knowledge loss.",
+        "tags": [
+          "remb",
+          "conversation",
+          "log"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "content": {
+              "type": "string",
+              "description": "Summary of what was discussed or accomplished"
+            },
+            "projectSlug": {
+              "type": "string",
+              "description": "Project slug (auto-detected if omitted)"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "summary",
+                "milestone",
+                "tool_call"
+              ],
+              "description": "Entry type (default: summary)"
+            }
+          },
+          "required": [
+            "content"
+          ]
+        },
+        "canBeReferencedInPrompt": true,
+        "userDescription": "Records a log of what was done in this session so the next session can pick up where you left off."
+      },
+      {
+        "name": "remb_saveContext",
+        "displayName": "Remb: Save Context",
+        "description": "Save a context entry for a project feature. Use this to persist knowledge about a codebase feature, decision, or change.",
+        "tags": [
+          "remb",
+          "context",
+          "save"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "featureName": {
+              "type": "string",
+              "description": "Feature or module name"
+            },
+            "content": {
+              "type": "string",
+              "description": "The context text to save (max 50,000 chars)"
+            },
+            "projectSlug": {
+              "type": "string",
+              "description": "Project slug (auto-detected if omitted)"
+            },
+            "entryType": {
+              "type": "string",
+              "enum": [
+                "manual",
+                "scan",
+                "decision",
+                "note"
+              ],
+              "description": "Entry type (default: manual)"
+            }
+          },
+          "required": [
+            "featureName",
+            "content"
+          ]
+        },
+        "canBeReferencedInPrompt": true,
+        "userDescription": "Saves knowledge about a feature or decision to Remb for future sessions."
+      },
+      {
+        "name": "remb_getContext",
+        "displayName": "Remb: Get Context",
+        "description": "Retrieve context entries for a project, optionally filtered by feature. Use this to recall past decisions, architecture notes, and feature knowledge.",
+        "tags": [
+          "remb",
+          "context",
+          "get"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "projectSlug": {
+              "type": "string",
+              "description": "Project slug (auto-detected if omitted)"
+            },
+            "featureName": {
+              "type": "string",
+              "description": "Filter by feature name"
+            },
+            "limit": {
+              "type": "number",
+              "description": "Max entries to return (default: 10)"
+            }
+          }
+        },
+        "canBeReferencedInPrompt": true,
+        "userDescription": "Retrieves saved context entries for a project or specific feature."
+      },
+      {
+        "name": "remb_listMemories",
+        "displayName": "Remb: List Memories",
+        "description": "List persistent AI memories, optionally filtered by tier or category. Memories persist across all sessions.",
+        "tags": [
+          "remb",
+          "memory",
+          "list"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "tier": {
+              "type": "string",
+              "enum": [
+                "core",
+                "active",
+                "archive"
+              ],
+              "description": "Filter by tier"
+            },
+            "category": {
+              "type": "string",
+              "enum": [
+                "preference",
+                "pattern",
+                "decision",
+                "correction",
+                "knowledge",
+                "general"
+              ],
+              "description": "Filter by category"
+            },
+            "search": {
+              "type": "string",
+              "description": "Search query"
+            },
+            "limit": {
+              "type": "number",
+              "description": "Max results (default: 20)"
+            }
+          }
+        },
+        "canBeReferencedInPrompt": true,
+        "userDescription": "Lists persistent memories stored in Remb — cross-session knowledge like patterns, decisions, and preferences."
+      },
+      {
+        "name": "remb_createMemory",
+        "displayName": "Remb: Create Memory",
+        "description": "Create a persistent AI memory when you discover important patterns, architectural decisions, gotchas, or user preferences. Memories persist across ALL sessions and are automatically loaded in future conversations.",
+        "tags": [
+          "remb",
+          "memory",
+          "create"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string",
+              "description": "Short title for the memory"
+            },
+            "content": {
+              "type": "string",
+              "description": "Memory content"
+            },
+            "tier": {
+              "type": "string",
+              "enum": [
+                "core",
+                "active",
+                "archive"
+              ],
+              "description": "Memory tier (default: active). Core memories are always loaded."
+            },
+            "category": {
+              "type": "string",
+              "enum": [
+                "preference",
+                "pattern",
+                "decision",
+                "correction",
+                "knowledge",
+                "general"
+              ],
+              "description": "Category (default: general)"
+            },
+            "projectSlug": {
+              "type": "string",
+              "description": "Project slug (omit for global memories)"
+            }
+          },
+          "required": [
+            "title",
+            "content"
+          ]
+        },
+        "canBeReferencedInPrompt": true,
+        "userDescription": "Creates a new persistent memory in Remb that will be available in all future sessions."
+      },
+      {
+        "name": "remb_triggerScan",
+        "displayName": "Remb: Trigger Scan",
+        "description": "Trigger a cloud scan of the project repository to update context. Returns scan ID for status polling.",
+        "tags": [
+          "remb",
+          "scan"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "projectSlug": {
+              "type": "string",
+              "description": "Project slug (auto-detected if omitted)"
+            }
+          }
+        },
+        "canBeReferencedInPrompt": true,
+        "userDescription": "Triggers a cloud scan of the project to refresh Remb's understanding of the codebase."
+      },
+      {
+        "name": "remb_scanStatus",
+        "displayName": "Remb: Check Scan Status",
+        "description": "Check the progress of a running scan. Returns percentage complete and file-level logs.",
+        "tags": [
+          "remb",
+          "scan",
+          "status"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "scanId": {
+              "type": "string",
+              "description": "Scan ID returned by remb_triggerScan"
+            }
+          },
+          "required": [
+            "scanId"
+          ]
+        },
+        "canBeReferencedInPrompt": true,
+        "userDescription": "Checks the progress of a Remb cloud scan."
+      }
+    ],
+    "commands": [
+      {
+        "command": "remb.login",
+        "title": "Remb: Sign In"
+      },
+      {
+        "command": "remb.logout",
+        "title": "Remb: Sign Out"
+      },
+      {
+        "command": "remb.saveContext",
+        "title": "Remb: Save Selection as Context"
+      },
+      {
+        "command": "remb.createMemory",
+        "title": "Remb: Create Memory",
+        "icon": "$(add)"
+      },
+      {
+        "command": "remb.searchMemories",
+        "title": "Remb: Search Memories"
+      },
+      {
+        "command": "remb.triggerScan",
+        "title": "Remb: Trigger Scan",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "remb.switchProject",
+        "title": "Remb: Switch Project",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "remb.openDashboard",
+        "title": "Remb: Open Dashboard",
+        "icon": "$(link-external)"
+      },
+      {
+        "command": "remb.refreshMemories",
+        "title": "Remb: Refresh Memories",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "remb.refreshContext",
+        "title": "Remb: Refresh Context",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "remb.deleteMemory",
+        "title": "Delete Memory",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "remb.promoteMemory",
+        "title": "Promote Memory",
+        "icon": "$(arrow-up)"
+      },
+      {
+        "command": "remb.checkSync",
+        "title": "Remb: Check Sync Status",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "remb.refreshChanges",
+        "title": "Remb: Refresh Changes",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "remb.toggleMcpServer",
+        "title": "Toggle MCP Server"
+      },
+      {
+        "command": "remb.connectMcpServer",
+        "title": "Connect MCP Server",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "remb.disconnectMcpServer",
+        "title": "Disconnect MCP Server",
+        "icon": "$(debug-disconnect)"
+      },
+      {
+        "command": "remb.setActiveProject",
+        "title": "Set as Active Project",
+        "icon": "$(folder-active)"
+      },
+      {
+        "command": "remb.refreshMcpServers",
+        "title": "Remb: Refresh MCP Servers",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "remb.editMcpServers",
+        "title": "Remb: Manage MCP Servers on Web",
+        "icon": "$(link-external)"
+      },
+      {
+        "command": "remb.editMemoryOnWeb",
+        "title": "Remb: Edit Memories on Web",
+        "icon": "$(link-external)"
+      },
+      {
+        "command": "remb.initProject",
+        "title": "Remb: Initialize Project"
+      },
+      {
+        "command": "remb.refreshProjects",
+        "title": "Remb: Refresh Projects",
+        "icon": "$(refresh)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "remb-sidebar",
+          "title": "Remb",
+          "icon": "$(database)"
+        }
+      ]
+    },
+    "views": {
+      "remb-sidebar": [
+        {
+          "id": "remb.projectsView",
+          "name": "Projects"
+        },
+        {
+          "id": "remb.changesView",
+          "name": "Changes Since Last Scan",
+          "when": "remb.hasProject"
+        },
+        {
+          "id": "remb.memoriesView",
+          "name": "Memories"
+        },
+        {
+          "id": "remb.mcpServersView",
+          "name": "Connected MCP Servers"
+        },
+        {
+          "id": "remb.contextView",
+          "name": "Context",
+          "when": "remb.hasProject"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "remb.projectsView",
+        "contents": "Sign in to Remb to see your projects.\n[Sign In](command:remb.login)",
+        "when": "!remb.authenticated"
+      },
+      {
+        "view": "remb.memoriesView",
+        "contents": "Sign in to Remb to view memories.\n[Sign In](command:remb.login)",
+        "when": "!remb.authenticated"
+      },
+      {
+        "view": "remb.memoriesView",
+        "contents": "View your memories below. To edit or delete, use the web dashboard.\n[Open Dashboard](command:remb.editMemoryOnWeb)",
+        "when": "remb.authenticated"
+      },
+      {
+        "view": "remb.contextView",
+        "contents": "Sign in to Remb to browse context.\n[Sign In](command:remb.login)",
+        "when": "!remb.authenticated"
+      },
+      {
+        "view": "remb.contextView",
+        "contents": "Open a workspace with a .remb.yml file to browse project context.\n[Initialize Project](command:remb.initProject)",
+        "when": "remb.authenticated && !remb.hasProject"
+      },
+      {
+        "view": "remb.changesView",
+        "contents": "Sign in to Remb to see changes since last scan.\n[Sign In](command:remb.login)",
+        "when": "!remb.authenticated"
+      },
+      {
+        "view": "remb.mcpServersView",
+        "contents": "Sign in to Remb to see connected MCP servers.\n[Sign In](command:remb.login)",
+        "when": "!remb.authenticated"
+      },
+      {
+        "view": "remb.mcpServersView",
+        "contents": "Toggle your MCP servers on or off below. To add, edit, or remove servers, use the web dashboard.\n[Manage on Web](command:remb.editMcpServers)",
+        "when": "remb.authenticated"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "remb.triggerScan",
+          "when": "view == remb.projectsView && remb.authenticated && remb.hasProject",
+          "group": "navigation@1"
+        },
+        {
+          "command": "remb.switchProject",
+          "when": "view == remb.projectsView && remb.authenticated",
+          "group": "navigation@2"
+        },
+        {
+          "command": "remb.refreshProjects",
+          "when": "view == remb.projectsView",
+          "group": "navigation@3"
+        },
+        {
+          "command": "remb.openDashboard",
+          "when": "view == remb.projectsView && remb.authenticated",
+          "group": "overflow"
+        },
+        {
+          "command": "remb.triggerScan",
+          "when": "view == remb.changesView && remb.authenticated && remb.hasProject",
+          "group": "navigation@1"
+        },
+        {
+          "command": "remb.checkSync",
+          "when": "view == remb.changesView && remb.authenticated",
+          "group": "navigation@2"
+        },
+        {
+          "command": "remb.refreshChanges",
+          "when": "view == remb.changesView",
+          "group": "navigation@3"
+        },
+        {
+          "command": "remb.createMemory",
+          "when": "view == remb.memoriesView && remb.authenticated",
+          "group": "navigation@1"
+        },
+        {
+          "command": "remb.refreshMemories",
+          "when": "view == remb.memoriesView",
+          "group": "navigation@2"
+        },
+        {
+          "command": "remb.editMemoryOnWeb",
+          "when": "view == remb.memoriesView && remb.authenticated",
+          "group": "navigation@3"
+        },
+        {
+          "command": "remb.refreshContext",
+          "when": "view == remb.contextView",
+          "group": "navigation"
+        },
+        {
+          "command": "remb.refreshMcpServers",
+          "when": "view == remb.mcpServersView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "remb.editMcpServers",
+          "when": "view == remb.mcpServersView && remb.authenticated",
+          "group": "navigation@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "remb.editMemoryOnWeb",
+          "when": "view == remb.memoriesView && viewItem == memory",
+          "group": "inline"
+        },
+        {
+          "command": "remb.connectMcpServer",
+          "when": "view == remb.mcpServersView && viewItem == mcpServer.inactive",
+          "group": "inline@1"
+        },
+        {
+          "command": "remb.disconnectMcpServer",
+          "when": "view == remb.mcpServersView && viewItem == mcpServer.active",
+          "group": "inline@1"
+        },
+        {
+          "command": "remb.setActiveProject",
+          "when": "view == remb.projectsView && viewItem == project.cloud",
+          "group": "inline@1"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "remb.saveContext",
+          "when": "editorHasSelection",
+          "group": "remb@1"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Remb",
+      "properties": {
+        "remb.apiUrl": {
+          "type": "string",
+          "default": "http://localhost:3000",
+          "description": "Remb API server URL"
+        },
+        "remb.autoLoadContext": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically load project context when a workspace with .remb.yml is opened"
+        },
+        "remb.contextRefreshIntervalMinutes": {
+          "type": "number",
+          "default": 2,
+          "minimum": 1,
+          "maximum": 60,
+          "description": "How often (in minutes) to flush captured activity and refresh AI context files"
+        }
+      }
+    }
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.99.0",
+    "@vscode/vsce": "^3.3.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.8.0"
+  }
+}

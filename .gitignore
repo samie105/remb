@@ -39,3 +39,15 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# PWA
+public/sw.js
+public/sw.js.map
+public/workbox-*.js
+public/workbox-*.js.map
+public/swe-worker-*.js
+
+# Remb dynamic context (auto-generated, do not commit)
+.github/instructions/remb-context.instructions.md
+.cursor/rules/remb-context.mdc
+.windsurf/rules/remb-context.md

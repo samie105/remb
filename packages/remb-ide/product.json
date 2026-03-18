@@ -1,0 +1,45 @@
+{
+	"nameShort": "Remb",
+	"nameLong": "Remb IDE",
+	"applicationName": "remb",
+	"dataFolderName": ".remb-ide",
+	"win32MutexName": "rembide",
+	"win32DirName": "Remb IDE",
+	"win32NameVersion": "Remb IDE",
+	"win32RegValueName": "RembIDE",
+	"win32AppUserModelId": "RembAI.RembIDE",
+	"win32ShellNameShort": "R&emb IDE",
+	"darwinBundleIdentifier": "ai.remb.RembIDE",
+	"linuxIconName": "remb",
+	"licenseName": "MIT",
+	"licenseUrl": "https://github.com/remb-ai/remb-ide/blob/main/LICENSE.txt",
+	"serverDataFolderName": ".remb-ide-server",
+	"serverApplicationName": "remb-server",
+	"quality": "stable",
+	"extensionEnabledApiProposals": {
+		"remb.remb": [
+			"chatParticipantPrivate",
+			"languageModelSystem",
+			"newSymbolNamesProvider",
+			"terminalDataWriteEvent",
+			"chatParticipantAdditions",
+			"inlineCompletionsAdditions"
+		]
+	},
+	"webApplicationInfo": {
+		"id": "RembIDE",
+		"host": "remb.vercel.app",
+		"origin": "https://remb.vercel.app"
+	},
+	"extensionAllowedProposedApi": [
+		"remb.remb",
+		"github.copilot",
+		"github.copilot-chat"
+	],
+	"trustedExtensionAuthAccess": [
+		"remb.remb",
+		"github.copilot",
+		"github.vscode-pull-request-github"
+	],
+	"builtInExtensions": []
+}
