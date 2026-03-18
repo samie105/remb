@@ -400,7 +400,7 @@ export function ProjectOverview({ project, features }: ProjectOverviewProps) {
                           type: "success",
                           title: checked ? "Scan on push enabled" : "Scan on push disabled",
                           message: checked
-                            ? `Add a GitHub webhook pointing to ${result.webhookUrl} to activate.`
+                            ? "GitHub webhook registered. Scans will trigger automatically on push."
                             : "Auto-scanning on push has been turned off.",
                         });
                       } catch (err) {

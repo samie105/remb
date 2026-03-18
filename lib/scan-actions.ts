@@ -486,7 +486,7 @@ export async function cancelScanJob(scanJobId: string): Promise<void> {
 export async function updateScanConfig(
   projectId: string,
   config: { scanOnPush?: boolean },
-): Promise<{ scanOnPush: boolean; webhookUrl: string | null }> {
+): Promise<{ scanOnPush: boolean }> {
   const session = await getSession();
   if (!session) throw new Error("Not authenticated");
 
@@ -494,22 +494,91 @@ export async function updateScanConfig(
 
   const { data: project } = await db
     .from("projects")
-    .select("id, scan_on_push, webhook_secret")
+    .select("id, repo_name, branch, scan_on_push, webhook_secret, github_webhook_id")
     .eq("id", projectId)
     .eq("user_id", session.dbUser.id)
     .single();
 
   if (!project) throw new Error("Project not found");
 
+  // Get user's GitHub token
+  const { data: user } = await db
+    .from("users")
+    .select("github_token")
+    .eq("id", session.dbUser.id)
+    .single();
+  const githubToken = user?.github_token;
+
   const updates: Record<string, unknown> = {};
 
   if (config.scanOnPush !== undefined) {
     updates.scan_on_push = config.scanOnPush;
 
-    // Generate a webhook secret on first enable
-    if (config.scanOnPush && !project.webhook_secret) {
-      const { randomBytes } = await import("node:crypto");
-      updates.webhook_secret = randomBytes(32).toString("hex");
+    const appUrl =
+      process.env.NEXT_PUBLIC_APP_URL ??
+      (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
+
+    if (config.scanOnPush) {
+      // Generate a webhook secret if we don't have one yet
+      let secret = project.webhook_secret;
+      if (!secret) {
+        const { randomBytes } = await import("node:crypto");
+        secret = randomBytes(32).toString("hex");
+        updates.webhook_secret = secret;
+      }
+
+      // Auto-register the webhook on GitHub if we have a token and repo
+      if (githubToken && project.repo_name && !project.github_webhook_id) {
+        try {
+          const res = await fetch(
+            `https://api.github.com/repos/${project.repo_name}/hooks`,
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${githubToken}`,
+                Accept: "application/vnd.github+json",
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                name: "web",
+                active: true,
+                events: ["push"],
+                config: {
+                  url: `${appUrl}/api/scan/webhook`,
+                  content_type: "json",
+                  secret,
+                  insecure_ssl: "0",
+                },
+              }),
+            },
+          );
+          if (res.ok) {
+            const hook = await res.json() as { id: number };
+            updates.github_webhook_id = hook.id;
+          }
+        } catch {
+          // Non-fatal: the toggle still saves, they can retry
+        }
+      }
+    } else {
+      // Auto-delete the webhook from GitHub when disabled
+      if (githubToken && project.repo_name && project.github_webhook_id) {
+        try {
+          await fetch(
+            `https://api.github.com/repos/${project.repo_name}/hooks/${project.github_webhook_id}`,
+            {
+              method: "DELETE",
+              headers: {
+                Authorization: `Bearer ${githubToken}`,
+                Accept: "application/vnd.github+json",
+              },
+            },
+          );
+        } catch {
+          // Non-fatal
+        }
+      }
+      updates.github_webhook_id = null;
     }
   }
 
@@ -517,16 +586,10 @@ export async function updateScanConfig(
     .from("projects")
     .update(updates)
     .eq("id", projectId)
-    .select("scan_on_push, webhook_secret")
+    .select("scan_on_push")
     .single();
 
   if (error) throw new Error(error.message);
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL
-    ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
-
-  return {
-    scanOnPush: data.scan_on_push,
-    webhookUrl: data.scan_on_push ? `${appUrl}/api/scan/webhook` : null,
-  };
+  return { scanOnPush: data.scan_on_push };
 }

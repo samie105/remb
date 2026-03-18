@@ -14,11 +14,19 @@ import {
   ArrowLeft02Icon,
   CodeIcon,
   Activity01Icon,
+  ArrowUp01Icon,
+  ArrowDown01Icon,
 } from "@hugeicons/core-free-icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   getScanJob,
   getScanFeatures,
@@ -102,7 +110,18 @@ export function ScanDetail({ scanJobId, projectSlug, onBack }: ScanDetailProps) 
   const [job, setJob] = React.useState<ScanJobWithProject | null>(null);
   const [features, setFeatures] = React.useState<ScanFeature[]>([]);
   const [isLoading, setIsLoading] = React.useState(true);
+  const [isTechModalOpen, setIsTechModalOpen] = React.useState(false);
+  const [collapsedTiers, setCollapsedTiers] = React.useState<Set<string>>(new Set());
   const logEndRef = React.useRef<HTMLDivElement>(null);
+
+  const toggleTier = React.useCallback((tier: string) => {
+    setCollapsedTiers((prev) => {
+      const next = new Set(prev);
+      if (next.has(tier)) next.delete(tier);
+      else next.add(tier);
+      return next;
+    });
+  }, []);
 
   function handleBack() {
     if (onBack) onBack();
@@ -263,21 +282,42 @@ export function ScanDetail({ scanJobId, projectSlug, onBack }: ScanDetailProps) 
         </motion.div>
       )}
 
-      {/* ─── Tech Stack pills ─── */}
+      {/* ─── Tech Stack icons ─── */}
       {allTech.length > 0 && (
-        <motion.div variants={item} className="flex flex-wrap gap-1.5">
-          {allTech.map((name) => {
-            const fileCount = languages[name];
-            return (
-              <Badge key={name} variant="secondary" className="gap-1.5 text-[11px] h-6 px-2 border-0">
-                <TechStackIcons items={[name]} size="xs" className="space-x-0!" />
-                {name}
-                {fileCount != null && (
-                  <span className="text-muted-foreground/50 text-[10px]">{fileCount}</span>
-                )}
-              </Badge>
-            );
-          })}
+        <motion.div variants={item} className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setIsTechModalOpen(true)}
+            className="flex items-center gap-2.5 hover:opacity-75 transition-opacity"
+            title="View all technologies"
+          >
+            <TechStackIcons items={allTech} size="sm" maxVisible={5} />
+            <span className="text-[12px] text-muted-foreground">
+              {allTech.length} {allTech.length === 1 ? "technology" : "technologies"}
+            </span>
+          </button>
+
+          <Dialog open={isTechModalOpen} onOpenChange={setIsTechModalOpen}>
+            <DialogContent className="max-w-sm">
+              <DialogHeader>
+                <DialogTitle className="text-[15px]">Technologies Used</DialogTitle>
+              </DialogHeader>
+              <div className="flex flex-wrap gap-2 mt-2">
+                {allTech.map((name) => {
+                  const fileCount = languages[name];
+                  return (
+                    <Badge key={name} variant="secondary" className="gap-1.5 text-[11px] h-7 px-2.5 border-0">
+                      <TechStackIcons items={[name]} size="xs" className="space-x-0!" />
+                      {name}
+                      {fileCount != null && (
+                        <span className="text-muted-foreground/50 text-[10px]">{fileCount} files</span>
+                      )}
+                    </Badge>
+                  );
+                })}
+              </div>
+            </DialogContent>
+          </Dialog>
         </motion.div>
       )}
 
@@ -312,22 +352,33 @@ export function ScanDetail({ scanJobId, projectSlug, onBack }: ScanDetailProps) 
             ) : (
               importanceGroups.map(({ tier, meta, features: tierFeatures }) => {
                 const tierIcon = TIER_ICONS[tier];
+                const isCollapsed = collapsedTiers.has(tier);
                 return (
                   <div key={tier} className="space-y-3">
                     {/* Tier header */}
-                    <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => toggleTier(tier)}
+                      className="flex items-center gap-2 w-full hover:opacity-80 transition-opacity"
+                    >
                       <div className="flex size-6 items-center justify-center rounded-md bg-muted/50">
                         <HugeiconsIcon icon={tierIcon} strokeWidth={2} className="size-3 text-muted-foreground" />
                       </div>
-                      <h3 className="text-[13px] font-medium text-foreground">
+                      <h3 className="text-[13px] font-medium text-foreground flex-1 text-left">
                         {meta.label}
                       </h3>
                       <span className="text-[11px] text-muted-foreground/60">
                         {tierFeatures.length}
                       </span>
-                    </div>
+                      <HugeiconsIcon
+                        icon={isCollapsed ? ArrowDown01Icon : ArrowUp01Icon}
+                        strokeWidth={2}
+                        className="size-3.5 text-muted-foreground/40"
+                      />
+                    </button>
 
                     {/* Feature rows */}
+                    {!isCollapsed && (
                     <div className="rounded-xl border border-border/40 overflow-hidden divide-y divide-border/30">
                       {tierFeatures.map((feature) => {
                         const files = feature.entries.map((e) => (e.metadata?.file_path as string) ?? "unknown");
@@ -374,8 +425,7 @@ export function ScanDetail({ scanJobId, projectSlug, onBack }: ScanDetailProps) 
                           </div>
                         );
                       })}
-                    </div>
-                  </div>
+                    </div>                    )}                  </div>
                 );
               })
             )}
@@ -383,8 +433,8 @@ export function ScanDetail({ scanJobId, projectSlug, onBack }: ScanDetailProps) 
 
           {/* ─── Build Log Tab ─── */}
           <TabsContent value="logs" className="mt-5">
-            <div className="rounded-xl border border-border/40 overflow-hidden">
-              <div className="bg-zinc-950">
+            <div className="rounded-xl border border-border/40 overflow-hidden w-full">
+              <div className="bg-zinc-950 w-full overflow-hidden">
                 {/* Terminal header */}
                 <div className="flex items-center gap-2 px-4 py-2.5 border-b border-zinc-800/80">
                   <div className="flex gap-1.5">
@@ -425,11 +475,11 @@ export function ScanDetail({ scanJobId, projectSlug, onBack }: ScanDetailProps) 
                           <span className={`shrink-0 w-3 text-center ${logStatusColor(log.status)}`}>
                             {logStatusSymbol(log.status)}
                           </span>
-                          <span className="text-zinc-600 shrink-0 w-18 text-[11px]">
+                          <span className="text-zinc-600 shrink-0 hidden sm:inline w-18 text-[11px]">
                             {new Date(log.timestamp).toLocaleTimeString("en-US", { hour12: false })}
                           </span>
                           {log.file && (
-                            <span className="text-zinc-400 shrink-0 max-w-52 truncate text-[11px]" title={log.file}>
+                            <span className="text-zinc-400 shrink-0 max-w-[25%] sm:max-w-52 truncate text-[11px]" title={log.file}>
                               {log.file}
                             </span>
                           )}

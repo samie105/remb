@@ -2,7 +2,7 @@
 # Remb — AI Context Management
 
 **Project**: `context-management`
-**API**: `https://remb.vercel.app`
+**API**: `http://localhost:3000`
 
 ## Mandatory Session Rules
 

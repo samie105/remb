@@ -152,12 +152,12 @@ export async function createProject(input: {
 
 export async function updateProject(
   id: string,
-  input: { name?: string; description?: string; status?: string }
+  input: { name?: string; description?: string; status?: string; website_url?: string | null }
 ): Promise<ProjectRow> {
   const user = await requireUser();
   const db = createAdminClient();
 
-  const updates: { name?: string; description?: string; status?: string; slug?: string } = { ...input };
+  const updates: { name?: string; description?: string; status?: string; slug?: string; website_url?: string | null } = { ...input };
   if (input.name) updates.slug = toSlug(input.name);
 
   const { data, error } = await db

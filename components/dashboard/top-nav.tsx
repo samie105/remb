@@ -115,6 +115,7 @@ export function TopNav({ user }: { user: DashboardUser }) {
                         </BreadcrumbLink>
                       )}
                     </BreadcrumbItem>
+                    {isLast && <BreadcrumbSeparator className="hidden md:flex" />}
                   </React.Fragment>
                 );
               })}

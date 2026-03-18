@@ -121,7 +121,17 @@ export function FeatureGroups({ projectId }: { projectId: string }) {
   const [selectedFeatureId, setSelectedFeatureId] = React.useState<string | null>(null);
   const [sortBy, setSortBy] = React.useState<SortOption>("importance");
   const [categoryFilter, setCategoryFilter] = React.useState<FeatureCategory | "all">("all");
+  const [collapsedTiers, setCollapsedTiers] = React.useState<Set<ImportanceTier>>(new Set());
   const scrollRef = React.useRef(0);
+
+  const toggleTier = React.useCallback((tier: ImportanceTier) => {
+    setCollapsedTiers((prev) => {
+      const next = new Set(prev);
+      if (next.has(tier)) next.delete(tier);
+      else next.add(tier);
+      return next;
+    });
+  }, []);
 
   const loadFeatures = React.useCallback(async () => {
     scrollRef.current = window.scrollY;
@@ -239,25 +249,36 @@ export function FeatureGroups({ projectId }: { projectId: string }) {
 
         return (
           <div key={group.tier} className="space-y-2">
-            {/* Tier header */}
-            <div className="flex items-center gap-2 px-0.5">
+            {/* Tier header - clickable to collapse */}
+            <button
+              type="button"
+              onClick={() => toggleTier(group.tier)}
+              className="flex items-center gap-2 px-0.5 w-full hover:opacity-80 transition-opacity"
+            >
               <HugeiconsIcon icon={tierIcon} strokeWidth={2} className="size-3.5 text-muted-foreground/60" />
-              <h3 className="text-[12px] font-medium text-muted-foreground tracking-wide uppercase">
+              <h3 className="text-[12px] font-medium text-muted-foreground tracking-wide uppercase flex-1 text-left">
                 {group.label}
               </h3>
               <span className="text-[11px] text-muted-foreground/50">{group.features.length}</span>
-            </div>
+              <HugeiconsIcon
+                icon={collapsedTiers.has(group.tier) ? ArrowDown01Icon : ArrowUp01Icon}
+                strokeWidth={2}
+                className="size-3.5 text-muted-foreground/40"
+              />
+            </button>
 
-            {/* Feature list */}
-            <div className="space-y-1.5">
-              {filteredFeatures.map((feature) => (
-                <FeatureRow
-                  key={feature.id}
-                  feature={feature}
-                  onSelect={setSelectedFeatureId}
-                />
-              ))}
-            </div>
+            {/* Feature list - hidden when collapsed */}
+            {!collapsedTiers.has(group.tier) && (
+              <div className="space-y-1.5">
+                {filteredFeatures.map((feature) => (
+                  <FeatureRow
+                    key={feature.id}
+                    feature={feature}
+                    onSelect={setSelectedFeatureId}
+                  />
+                ))}
+              </div>
+            )}
           </div>
         );
       })}

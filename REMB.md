@@ -5,7 +5,7 @@
 ## Project
 
 - **Slug**: `context-management`
-- **API**: `https://remb.vercel.app`
+- **API**: `http://localhost:3000`
 - **Config**: `.remb.yml` (committed, no secrets)
 
 ## What is Remb?
@@ -56,20 +56,51 @@ remb push --no-progress        # Fire and forget (don't wait for results)
 
 **Pre-flight checks**: Verifies you're in a git repo, warns about uncommitted changes, checks if local is ahead of remote.
 
-**Live progress**: After triggering, polls for scan status and displays a progress bar with percentage, files scanned, and per-file logs (✓ done, ○ skipped, ✗ error).
+**Live progress**: After triggering, polls for scan status and displays a progress bar. During high load, scans queue; the status will show `queued` before it turns `running`. The CLI waits and shows progress regardless.
 
-**Returns**: `started` | `already_running` | `up_to_date`
+**Returns**: `started` | `already_running` | `up_to_date` | `queued`
 
 ### remb scan
-Auto-scan a directory and generate context entries locally.
+**Local scan** — reads files directly from disk in the CLI process, groups them by directory into context entries, and uploads the results to Remb. No git required, no GitHub access needed. Works offline repos, monorepos, and any directory structure.
+
+> **Local vs cloud**: `remb scan` runs entirely on your machine and uploads results immediately. `remb push` triggers a server-side scan that reads from GitHub — it requires committed + pushed changes and a connected GitHub repo.
 
 ```sh
-remb scan                        # Scan current directory
-remb scan -p <slug> --path src/  # Scan specific path
-remb scan --depth 3              # Limit directory depth
-remb scan --dry-run              # Preview without saving
-remb scan --ignore "test,dist"   # Skip directories
+remb scan                           # Scan current directory (all subdirs)
+remb scan --path src/               # Scan a specific subdirectory
+remb scan -p <slug> --path src/     # Scan with explicit project slug
+remb scan --depth 3                 # Limit recursion depth (default: 5)
+remb scan --dry-run                 # Preview features without saving
+remb scan --ignore "tests,dist"     # Skip directories by name
 ```
+
+**What it does**:
+1. Walks the target directory (respecting `--depth` and `--ignore`)
+2. Groups source files by directory — each directory becomes one context entry (feature)
+3. Shows a preview: feature name, detected tags, content size in KB
+4. Uploads all entries via `saveBatch` with a progress counter
+
+**Preview output** (before saving):
+```
+Found 84 source files across 12 directories.
+
+  ● app/api — typescript, backend — 4.2KB
+  ● components/dashboard — typescript, react — 11.8KB
+  ● lib — typescript, utilities — 6.1KB
+  ...
+
+Saving context entries... 8/12
+✓ Uploaded 12 context entries to my-app
+```
+
+**When to use `remb scan` vs `remb push`**:
+| Scenario | Use |
+|---|---|
+| No git remote / not on GitHub | `remb scan` |
+| First-time setup, no commits yet | `remb scan` |
+| Monorepo with multiple sub-projects | `remb scan --path packages/my-pkg` |
+| After pushing commits to GitHub | `remb push` |
+| Want AI-powered per-file analysis | `remb push` |
 
 ### remb save
 Save a context entry for a feature.
@@ -115,15 +146,20 @@ remb diff --all                    # All changes (staged + unstaged)
 ```
 
 ### remb memory
-Manage persistent AI memories (knowledge that persists across sessions).
+Manage persistent AI memories. Memories have two scopes:
+- **Project-scoped** — linked to a specific project (relevant to that codebase only)
+- **Global** — no project scope (project_id is null) — apply across ALL projects
 
 ```sh
 remb memory add -t "Title" -c "Content..." --tier core --category architecture
-remb memory list                     # List all memories
+remb memory add -t "Title" -c "Content..." --project my-app  # project-scoped memory
+remb memory list                       # All memories (shows [project] or [global] badge)
+remb memory list --project my-app      # Project memories + global memories
+remb memory list --global              # Only global memories
 remb memory list --tier core -s "auth" # Search core-tier memories
 remb memory update <id> -c "Updated content..."
 remb memory delete <id>
-remb memory promote <id> --to core   # Promote to core tier
+remb memory promote <id> --to core     # Promote to core tier
 ```
 
 **Tiers**: `core` (always loaded), `active` (session-relevant), `archive` (historical)
@@ -138,12 +174,17 @@ remb link --from "auth-flow" --to "user-profile" --type depends_on
 **Types**: `depends_on`, `extends`, `uses`
 
 ### remb projects
-List and manage projects.
+List and manage projects. Switch the active project for the current workspace.
 
 ```sh
-remb projects list
-remb projects list --status active --format json
+remb projects list                           # List all projects
+remb projects list --status active           # Filter by status
+remb projects list --format json             # JSON output
+remb projects use my-app                     # Set active project (writes .remb.yml)
+remb projects switch my-app                  # Same as use
 ```
+
+**remb projects use <slug>** looks up the project on the server, confirms it exists, then writes `.remb.yml` in the current directory. All subsequent commands will use the new project.
 
 ### remb serve
 Start a local MCP server for direct AI tool integration (stdio transport).
@@ -154,10 +195,23 @@ remb serve --project <slug>        # Serve specific project
 ```
 
 **Exposed MCP tools**:
+
+Context & scanning:
 - `save_context` — persist knowledge about a feature
 - `get_context` — recall entries (with optional feature filter)
 - `load_project_context` — full project bundle as markdown
 - `analyze_diff` — AI-analyze uncommitted git changes
+
+Memory management:
+- `memory_list` — list memories; pass `projectSlug` to get project + global memories
+- `memory_create` — create a memory (omit `projectSlug` for global scope)
+- `memory_update` — update title, content, tier, category, or tags
+- `memory_delete` — delete a memory by ID
+- `memory_promote` — change a memory's tier
+
+Conversation tracking:
+- `conversation_log` — record what was discussed/accomplished (call after completing work)
+- `conversation_history` — load prior session history (call at session start)
 
 ### remb history
 View conversation history — see what AI discussed and did across sessions.
@@ -172,9 +226,9 @@ remb history --format json             # Raw JSON
 remb history -p <slug>                 # Filter by project
 ```
 
-**MCP conversation tools** (available when connected via MCP):
-- `remb__conversation_log` — record what you discussed or accomplished (call after completing work)
-- `remb__conversation_history` — load recent conversation history (call at session start to catch up)
+**MCP tools** (available when connected via `remb serve` or the hosted MCP endpoint):
+- `conversation_log` — record what you discussed or accomplished (call after completing work)
+- `conversation_history` — load recent conversation history (call at session start to catch up)
 
 ## Step-by-Step Workflows
 
@@ -209,60 +263,14 @@ Follow these workflows in order. Each numbered step must complete before proceed
 2. **Diff analysis** — `remb diff --all` (analyzes all staged + unstaged changes)
 3. **Review** — check the generated context entries summarizing your changes
 
-### 6. Local scan (no GitHub required)
+### 6. Local scan (no git / no GitHub required)
 
-Upload local files directly from the CLI for AI extraction — useful when the repo isn't on GitHub or you want to scan uncommitted work.
+Use this when the repo isn't on GitHub, has no git remote, or you want to scan a specific subdirectory.
 
-1. **Run local scan** — `remb push --local` (reads local files, uploads in batches to the server)
-2. **Server processes** — files go through the same AI feature extraction pipeline as GitHub scans
-3. **Results appear** — features and context entries are stored identically to cloud scans
-
-**How it works internally**:
-- CLI reads workspace files (respecting `.rembignore` patterns)
-- Uploads in batches of up to 50 files to `POST /api/cli/scan/upload`
-- Server creates a scan job and dispatches each batch to `POST /api/scan/run-local`
-- Each batch is processed through OpenAI feature extraction with embeddings
-- Final batch marks the scan as done and triggers queue processing
-
-## Scan Queue System
-
-Remb limits concurrent scans to prevent overwhelming the OpenAI API and server resources. When multiple users (or the same user across projects) trigger scans simultaneously:
-
-- **Concurrency limit**: 3 scans can run at the same time (`MAX_CONCURRENT_SCANS = 3`)
-- **Queuing**: If at capacity, new scans are created with `status: "queued"` and wait in FIFO order
-- **Auto-dispatch**: When a running scan completes (success or failure), the queue processor (`POST /api/scan/process-queue`) automatically starts the next queued scan
-- **Stale recovery**: Scans stuck in "running" for >15 minutes are automatically marked as failed, freeing up slots
-- **Per-project guard**: Only one scan can be queued or running per project at a time
-
-The queue is fully automatic — users see "Scan queued" status and it starts when a slot opens.
-
-## VS Code Extension
-
-The Remb VS Code extension integrates directly into the sidebar with these views:
-
-### Projects (Local & Cloud)
-- **Local group**: Shows the current workspace project (detected from `.remb.yml`). If no config exists, shows a "Configure this project" action that runs `remb init`.
-- **Cloud group**: Lists all your Remb projects from the server.
-- Projects show their last scan time and sync status.
-
-### Memories (Read-Only)
-- Displays all project memories grouped by tier (core, active, archive).
-- Memories are read-only in the extension — editing and deletion is done on the web dashboard.
-- Click "Edit on Web" to manage memories in the browser.
-
-### Connected MCP Servers
-- Lists all MCP servers you've connected through the Remb dashboard.
-- Toggle servers on/off directly from the sidebar (enables/disables the server for MCP tool routing).
-- Shows health status, tool count, and active/disabled state.
-- Click "Manage on Web" to add, edit, or remove MCP servers.
-
-### Changes & Context
-- Only visible when a project is configured (`.remb.yml` exists).
-- **Changes**: Tracks file changes in the workspace.
-- **Context**: Browse context entries for the current project.
-
-### AI Chat Participant
-- Use `@remb` in VS Code Copilot Chat to query project context, save knowledge, and trigger scans conversationally.
+1. **Preview first** — `remb scan --dry-run` (see what directories will be scanned, no upload)
+2. **Full scan** — `remb scan` (uploads all directory-grouped context entries)
+3. **Verify** — `remb get` (confirm entries appear in the project)
+4. **Targeted scan** — `remb scan --path src/ --depth 3` to narrow the scope
 
 ## MCP Integration
 
@@ -280,30 +288,7 @@ Add Remb as an MCP server in your IDE for direct AI tool access:
 }
 ```
 
-Or connect to the hosted endpoint at `https://remb.vercel.app/api/mcp` for aggregated MCP access with all your connected servers.
-
-## Architecture Notes
-
-### API Routes (for AI reference)
-
-| Route | Purpose |
-|---|---|
-| `POST /api/scan/run` | GitHub scan worker (maxDuration=300s, secret-authenticated) |
-| `POST /api/scan/run-local` | Local scan worker (processes uploaded file batches) |
-| `POST /api/scan/process-queue` | Queue processor (checks concurrency, dispatches next scan) |
-| `POST /api/cli/scan/upload` | CLI uploads local file batches here |
-| `GET/PATCH /api/cli/mcp-servers` | List/toggle MCP servers (extension uses this) |
-| `GET /api/cli/sync-status` | Check if project has unscanned changes |
-| `GET /api/cli/projects` | List user's projects (extension uses this) |
-| `POST /api/mcp` | MCP protocol endpoint (aggregated tool access) |
-
-### Scan Pipeline
-
-1. **Trigger**: `createScanJob()` (server action) or `POST /api/cli/scan/upload` (local)
-2. **Concurrency check**: If <3 scans running → start immediately. Otherwise → queue.
-3. **Worker**: `/api/scan/run` (GitHub) or `/api/scan/run-local` (local) processes files
-4. **Per-file**: `extractFeaturesFromFile()` → upsert feature → create context_entry with embedding
-5. **Completion**: Mark job done → trigger queue processor → start next queued scan
+Or connect to the hosted endpoint at `http://localhost:3000/api/mcp` for aggregated MCP access with all your connected servers.
 
 ## Exit Codes
 

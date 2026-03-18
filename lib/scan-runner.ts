@@ -23,7 +23,23 @@ import { extractImports, getInternalImports } from "@/lib/import-parser";
 import type { ScanLogEntry, ScanResult } from "@/lib/scan-actions";
 
 /** Files processed per serverless invocation. Keeps each call well under Vercel's limit. */
-const CHUNK_SIZE = 50;
+const CHUNK_SIZE = 15;
+
+/** Retry an async operation up to `maxAttempts` times with exponential back-off. */
+async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 3, delayMs = 1000): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err;
+      if (attempt < maxAttempts) {
+        await new Promise((res) => setTimeout(res, delayMs * attempt));
+      }
+    }
+  }
+  throw lastError;
+}
 
 export async function runScan(
   scanJobId: string,
@@ -278,8 +294,8 @@ export async function runScan(
     const nextOffset = chunkOffset + CHUNK_SIZE;
     const hasMoreChunks = nextOffset < queuedFiles.length;
 
-    // 2. Process this chunk's files in batches of 10
-    await processInBatches(chunkFiles, 10, async (file) => {
+    // 2. Process this chunk's files in batches of 3 (low concurrency avoids OpenAI rate limits)
+    await processInBatches(chunkFiles, 3, async (file) => {
       // Check if the scan was cancelled between batches
       const { data: jobCheck } = await db
         .from("scan_jobs")
@@ -335,7 +351,7 @@ export async function runScan(
           // Non-fatal: import extraction failure shouldn't block the scan
         }
 
-        const extracted = await extractFeaturesFromFile(content, file.path);
+        const extracted = await withRetry(() => extractFeaturesFromFile(content, file.path));
 
         if (!extracted) {
           filesProcessed++;
@@ -413,7 +429,7 @@ export async function runScan(
         // the entry (and its metadata) are still valuable.
         let embedding: number[] | null = null;
         try {
-          embedding = await generateEmbedding(extracted.summary);
+          embedding = await withRetry(() => generateEmbedding(extracted.summary));
         } catch {
           // non-fatal: entry will be created without a vector
         }
@@ -567,7 +583,10 @@ function chainNextChunk(
     process.env.NEXT_PUBLIC_APP_URL ??
     (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
   const secret = process.env.SCAN_WORKER_SECRET;
-  if (!secret) return;
+  if (!secret) {
+    console.error(`[scan-runner] SCAN_WORKER_SECRET is not set — cannot chain next chunk (offset ${chunkOffset}). Scan will stop here.`);
+    return;
+  }
 
   fetch(`${appUrl}/api/scan/run`, {
     method: "POST",

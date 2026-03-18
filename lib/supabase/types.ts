@@ -91,6 +91,7 @@ export interface Database {
           scan_on_push: boolean;
           webhook_secret: string | null;
           ignore_patterns: string | null;
+          website_url: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -108,6 +109,7 @@ export interface Database {
           scan_on_push?: boolean;
           webhook_secret?: string | null;
           ignore_patterns?: string | null;
+          website_url?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -123,6 +125,7 @@ export interface Database {
           scan_on_push?: boolean;
           webhook_secret?: string | null;
           ignore_patterns?: string | null;
+          website_url?: string | null;
           updated_at?: string;
         };
         Relationships: [];
