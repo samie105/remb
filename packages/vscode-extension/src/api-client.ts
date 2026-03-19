@@ -374,4 +374,21 @@ export class ApiClient {
       filesReceived: number;
     }>("POST", "/api/cli/scan/upload", params);
   }
+
+  // ── File Context (for .remb/ mirror) ─────────────────────
+
+  async getFileContextMap(projectSlug: string) {
+    return this.request<{
+      files: Record<string, Array<{
+        feature: string;
+        featureDescription: string | null;
+        content: string;
+        category: string;
+        importance: number;
+        entryType: string;
+        tags: string[];
+        updatedAt: string;
+      }>>;
+    }>("GET", "/api/cli/context/files", undefined, { projectSlug });
+  }
 }

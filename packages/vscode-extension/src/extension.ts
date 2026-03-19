@@ -11,6 +11,7 @@ import { registerCommands } from "./commands";
 import { SyncManager, ChangesTreeProvider } from "./sync";
 import { InstructionsManager } from "./instructions";
 import { SessionTracker } from "./session-tracker";
+import { ContextMirror } from "./context-mirror";
 
 /** Module-level ref so deactivate() can log the session end. */
 let sessionTracker: SessionTracker | undefined;
@@ -169,8 +170,12 @@ export async function activate(context: vscode.ExtensionContext) {
   // ── Start sync polling ────────────────────────────────────
   syncManager.start();
 
+  // ── Context mirror (.remb/ local structure) ────────────────
+  const mirror = new ContextMirror(api, workspace, auth);
+  mirror.start();
+
   // ── Disposables ───────────────────────────────────────────
-  context.subscriptions.push(auth, workspace, statusBar, syncManager, instructions, capture, tracker);
+  context.subscriptions.push(auth, workspace, statusBar, syncManager, instructions, capture, tracker, mirror);
 }
 
 export function deactivate(): Thenable<void> | undefined {

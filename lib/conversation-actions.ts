@@ -16,6 +16,7 @@ interface LogConversationInput {
   userId: string;
   projectId?: string | null;
   projectSlug?: string | null;
+  featureId?: string | null;
   sessionId: string;
   type?: "summary" | "tool_call" | "milestone" | "conversation";
   content: string;
@@ -111,6 +112,7 @@ export async function logConversation(input: LogConversationInput) {
     user_id: input.userId,
     project_id: input.projectId ?? null,
     project_slug: input.projectSlug ?? null,
+    feature_id: input.featureId ?? null,
     session_id: input.sessionId,
     type: input.type ?? "summary",
     content: trimmedContent,

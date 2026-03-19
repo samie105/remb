@@ -42,6 +42,7 @@ export type MemoryStats = {
 
 export type CreateMemoryInput = {
   projectId?: string;
+  featureId?: string;
   tier?: MemoryTier;
   category?: MemoryCategory;
   title: string;
@@ -172,6 +173,7 @@ export async function createMemory(input: CreateMemoryInput): Promise<MemoryRow>
     .insert({
       user_id: user.id,
       project_id: input.projectId ?? null,
+      feature_id: input.featureId ?? null,
       tier: input.tier ?? "active",
       category: input.category ?? "general",
       title: input.title,
