@@ -38,6 +38,9 @@ export async function activate(context: vscode.ExtensionContext) {
   // ── API client ────────────────────────────────────────────
   const api = new ApiClient(() => auth.getApiKey());
 
+  // Let the API client try CLI credential import on 401 before prompting
+  api.setCliImporter(() => auth.tryImportFromCli(true));
+
   // Notify API client of fresh logins so it can retry early 401s
   auth.onDidChangeAuth((isLoggedIn) => {
     if (isLoggedIn) api.markLogin();
@@ -64,6 +67,7 @@ export async function activate(context: vscode.ExtensionContext) {
   // ── Changes tree view (files changed since last scan) ─────
   const changesTree = new ChangesTreeProvider(syncManager);
   context.subscriptions.push(
+    changesTree,
     vscode.window.registerTreeDataProvider("remb.changesView", changesTree)
   );
 
@@ -175,7 +179,7 @@ export async function activate(context: vscode.ExtensionContext) {
   mirror.start();
 
   // ── Disposables ───────────────────────────────────────────
-  context.subscriptions.push(auth, workspace, statusBar, syncManager, instructions, capture, tracker, mirror);
+  context.subscriptions.push(auth, workspace, statusBar, syncManager, instructions, capture, tracker, mirror, api);
 }
 
 export function deactivate(): Thenable<void> | undefined {

@@ -2,7 +2,7 @@
   "name": "remb",
   "displayName": "Remb",
   "description": "Persistent memory and context for AI coding sessions — makes your AI remember across conversations",
-  "version": "0.1.0",
+  "version": "0.1.9",
   "publisher": "remb",
   "license": "MIT",
   "repository": {
@@ -34,7 +34,9 @@
     "watch": "node esbuild.mjs --watch",
     "package": "vsce package --no-dependencies",
     "publish": "vsce publish --no-dependencies",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "contributes": {
     "chatParticipants": [
@@ -682,6 +684,7 @@
     "@types/vscode": "^1.99.0",
     "@vscode/vsce": "^3.3.0",
     "esbuild": "^0.25.0",
-    "typescript": "^5.8.0"
+    "typescript": "^5.8.0",
+    "vitest": "^4.1.0"
   }
 }

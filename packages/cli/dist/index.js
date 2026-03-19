@@ -603,6 +603,23 @@ Examples:
     }
     return saveAndConfirm(Buffer.concat(chunks).toString("utf-8").trim());
   }
+  const existingKey = getApiKey();
+  if (existingKey) {
+    const isValid = await verifyExistingKey(existingKey);
+    if (isValid) {
+      console.log();
+      success(`Already authenticated!`);
+      keyValue("Key", `remb_...${existingKey.slice(-4)}`);
+      keyValue("Credentials", getCredentialsFilePath());
+      console.log();
+      process.stdout.write(`  ${chalk3.bold("Re-authenticate anyway?")} ${chalk3.dim("[y/N]")}: `);
+      const answer = await readLine();
+      if (answer.toLowerCase() !== "y") {
+        return;
+      }
+      console.log();
+    }
+  }
   console.log();
   console.log(chalk3.bold("  How would you like to authenticate?"));
   console.log();
@@ -691,6 +708,18 @@ async function readLine() {
     break;
   }
   return Buffer.concat(chunks).toString("utf-8").trim();
+}
+async function verifyExistingKey(apiKey) {
+  try {
+    const baseUrl = getBaseUrl();
+    const res = await fetch(`${baseUrl}/api/cli/projects?limit=1`, {
+      headers: { Authorization: `Bearer ${apiKey}`, "User-Agent": "remb-cli/0.1.0" },
+      signal: AbortSignal.timeout(5e3)
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 var logoutCommand = new Command("logout").description("Remove stored API credentials").option("-f, --force", "Skip confirmation prompt").addHelpText(
   "after",

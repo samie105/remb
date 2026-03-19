@@ -9,6 +9,7 @@
  */
 
 import { createAdminClient } from "@/lib/supabase/server";
+import { getInternalApiUrl } from "@/lib/utils";
 import type { Json } from "@/lib/supabase/types";
 import {
   getRepoFiles,
@@ -468,28 +469,71 @@ export async function runScan(
           // non-fatal: entry will be created without a vector
         }
 
-        const { error: entryError } = await db.from("context_entries").insert({
-          feature_id: featureId,
-          content: contextContent,
-          entry_type: "scan",
-          source: "worker",
-          metadata: {
-            file_path: file.path,
-            file_sha: file.sha,
-            scan_job_id: scanJobId,
-            feature_name: extracted.feature_name,
-            category: extracted.category,
-            importance: extracted.importance,
-            tags: extracted.tags,
-            dependencies: extracted.dependencies,
-          },
-          ...(embedding ? { embedding: `[${embedding.join(",")}]` } : {}),
-        });
+        // Semantic dedup: if an existing entry for this file_path has a very
+        // similar embedding (cosine > 0.95), update it instead of creating a duplicate.
+        let dedupedEntryId: string | null = null;
+        if (embedding) {
+          try {
+            const { data: similar } = await db.rpc("match_context_entries" as "search_context", {
+              query_embedding: `[${embedding.join(",")}]`,
+              match_threshold: 0.95,
+              match_count: 1,
+              p_feature_id: featureId,
+            } as never);
+            const rows = similar as unknown as Array<{ id: string; metadata: Record<string, unknown> | null }> | null;
+            if (rows?.[0]?.id) {
+              const existingMeta = rows[0].metadata;
+              // Only dedup if it's the same file path
+              if (existingMeta?.file_path === file.path) {
+                dedupedEntryId = rows[0].id;
+              }
+            }
+          } catch {
+            // RPC may not exist yet — fall through to normal insert
+          }
+        }
 
-        if (entryError) {
-          errors++;
-        } else {
+        if (dedupedEntryId) {
+          // Update existing entry with new content + SHA — no duplicate created
+          await db.from("context_entries").update({
+            content: contextContent,
+            metadata: {
+              file_path: file.path,
+              file_sha: file.sha,
+              scan_job_id: scanJobId,
+              feature_name: extracted.feature_name,
+              category: extracted.category,
+              importance: extracted.importance,
+              tags: extracted.tags,
+              dependencies: extracted.dependencies,
+            },
+            ...(embedding ? { embedding: `[${embedding.join(",")}]` } : {}),
+          }).eq("id", dedupedEntryId);
           entriesCreated++;
+        } else {
+          const { error: entryError } = await db.from("context_entries").insert({
+            feature_id: featureId,
+            content: contextContent,
+            entry_type: "scan",
+            source: "worker",
+            metadata: {
+              file_path: file.path,
+              file_sha: file.sha,
+              scan_job_id: scanJobId,
+              feature_name: extracted.feature_name,
+              category: extracted.category,
+              importance: extracted.importance,
+              tags: extracted.tags,
+              dependencies: extracted.dependencies,
+            },
+            ...(embedding ? { embedding: `[${embedding.join(",")}]` } : {}),
+          });
+
+          if (entryError) {
+            errors++;
+          } else {
+            entriesCreated++;
+          }
         }
 
         filesProcessed++;
@@ -613,9 +657,7 @@ function chainNextChunk(
   githubToken: string,
   chunkOffset: number,
 ) {
-  const appUrl =
-    process.env.NEXT_PUBLIC_APP_URL ??
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
+  const appUrl = getInternalApiUrl();
   const secret = process.env.SCAN_WORKER_SECRET?.trim();
   if (!secret) {
     console.error(`[scan-runner] SCAN_WORKER_SECRET is not set — cannot chain next chunk (offset ${chunkOffset}). Scan will stop here.`);
@@ -635,8 +677,7 @@ function chainNextChunk(
 }
 
 function triggerQueueProcessing() {
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL
-    ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
+  const appUrl = getInternalApiUrl();
   const secret = process.env.SCAN_WORKER_SECRET?.trim();
   if (!secret) return;
 

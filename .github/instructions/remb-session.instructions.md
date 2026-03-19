@@ -68,14 +68,14 @@ Skipping these causes knowledge loss across sessions. The user expects you to fo
 | Saving knowledge | `context_save` (feature-specific) or `memory_create` (cross-cutting) |
 | After code changes | `scan_trigger` or `diff_analyze` |
 | Finishing work | `conversation_log` with summary |
-| "Do it like in project X" | `cross_project_search` → `context_bundle` with that project slug |
-| Global coding preference | `memory_create` with no `project_id`, category `"preference"` |
+| "Do it like in project X" | `cross_project_search` -> `context_bundle` with that project slug |
+| Global coding preference | `memory_create` with no `project_id`, category "preference" |
 
 ## Memory Tiers
 
-- **core** — always loaded into every session automatically
-- **active** — loaded on-demand or when relevant to current query
-- **archive** — compressed long-term storage
+- **core** -- always loaded into every session automatically
+- **active** -- loaded on-demand or when relevant to current query
+- **archive** -- compressed long-term storage
 
 Save architectural decisions and key patterns as `core` tier so they're always available.
 <!-- remb:end -->

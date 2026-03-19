@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
+import { getInternalApiUrl } from "@/lib/utils";
 
 /**
  * POST /api/scan/process-queue
@@ -63,8 +64,7 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL
-    ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
+  const appUrl = getInternalApiUrl();
 
   let started = 0;
 

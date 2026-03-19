@@ -82,6 +82,25 @@ export const loginCommand = new Command("login")
       return saveAndConfirm(Buffer.concat(chunks).toString("utf-8").trim());
     }
 
+    // ── Check existing authentication ───────────────────────────────────
+    const existingKey = getApiKey();
+    if (existingKey) {
+      const isValid = await verifyExistingKey(existingKey);
+      if (isValid) {
+        console.log();
+        success(`Already authenticated!`);
+        keyValue("Key", `remb_...${existingKey.slice(-4)}`);
+        keyValue("Credentials", getCredentialsFilePath());
+        console.log();
+        process.stdout.write(`  ${chalk.bold("Re-authenticate anyway?")} ${chalk.dim("[y/N]")}: `);
+        const answer = await readLine();
+        if (answer.toLowerCase() !== "y") {
+          return;
+        }
+        console.log();
+      }
+    }
+
     // TTY: ask the user how they want to login
     console.log();
     console.log(chalk.bold("  How would you like to authenticate?"));
@@ -192,6 +211,19 @@ async function readLine(): Promise<string> {
     break;
   }
   return Buffer.concat(chunks).toString("utf-8").trim();
+}
+
+async function verifyExistingKey(apiKey: string): Promise<boolean> {
+  try {
+    const baseUrl = getBaseUrl();
+    const res = await fetch(`${baseUrl}/api/cli/projects?limit=1`, {
+      headers: { Authorization: `Bearer ${apiKey}`, "User-Agent": "remb-cli/0.1.0" },
+      signal: AbortSignal.timeout(5000),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 export const logoutCommand = new Command("logout")

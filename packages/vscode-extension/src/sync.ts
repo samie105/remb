@@ -130,15 +130,23 @@ class StatusMessageNode {
   ) {}
 }
 
-export class ChangesTreeProvider implements vscode.TreeDataProvider<ChangeItem> {
+export class ChangesTreeProvider implements vscode.TreeDataProvider<ChangeItem>, vscode.Disposable {
   private _onDidChangeTreeData = new vscode.EventEmitter<ChangeItem | undefined>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
   private changes: ChangedFileNode[] = [];
   private statusMessage: string | null = null;
+  private disposables: vscode.Disposable[] = [];
 
   constructor(private syncManager: SyncManager) {
-    syncManager.onDidChangeSyncState(() => this.refresh());
+    this.disposables.push(
+      syncManager.onDidChangeSyncState(() => this.refresh())
+    );
+  }
+
+  dispose() {
+    this._onDidChangeTreeData.dispose();
+    this.disposables.forEach((d) => d.dispose());
   }
 
   refresh() {

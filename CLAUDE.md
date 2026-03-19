@@ -161,11 +161,16 @@ _You already have the above context. Use `remb_conversationLog` to record what y
 
 ## MANDATORY — Follow These in EVERY Session
 
-1. At session start, call `remb__conversation_history` to load prior session context.
-2. At session start, call `remb__memory_load_context` to load all project memories.
-3. After completing significant work, call `remb__conversation_log` to record it.
-4. Before ending the session, call `remb__conversation_log` with a final summary.
-5. Save important patterns/decisions with `remb__memory_create`.
+### Session Start
+1. Call `remb__conversation_history` — load prior session context
+2. Call `remb__memory_load_context` — load all persistent project memories
+
+### During Work
+3. Call `remb__conversation_log` after completing any significant task
+4. Call `remb__memory_create` when you discover important patterns or decisions
+
+### Session End
+5. Call `remb__conversation_log` with a final summary
 
 ### Available MCP Tools
 
@@ -202,7 +207,14 @@ _You already have the above context. Use `remb_conversationLog` to record what y
 - `remb__context_bundle` — also works with other project slugs to load another project's full context
 - `remb__memory_create` — create with no project_id to save global preferences that apply everywhere
 
-## Cross-Project
+## Quick Reference
 
-When told "implement it like in project X", use `cross_project_search` to find patterns, then `context_bundle` with the other project's slug.
+| Situation | Tool |
+|---|---|
+| Starting a session | `conversation_history` + `memory_load_context` |
+| Need project info | `project_get` or `context_bundle` |
+| Saving knowledge | `context_save` or `memory_create` |
+| After code changes | `scan_trigger` or `diff_analyze` |
+| Finishing work | `conversation_log` |
+| Reference another project | `cross_project_search` + `context_bundle` |
 <!-- remb:end -->

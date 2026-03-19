@@ -35,10 +35,16 @@ export class ApiClient {
 
   private _authErrorPrompted = false;
   private _lastLoginAt = 0;
+  private _tryImportFromCli?: () => Promise<boolean>;
 
   constructor(private getApiKey: () => Promise<string | undefined>) {
     const config = vscode.workspace.getConfiguration("remb");
     this.baseUrl = (config.get<string>("apiUrl") ?? "https://www.useremb.com").replace(/\/+$/, "");
+  }
+
+  /** Set a callback to attempt CLI credential import on auth failure. */
+  setCliImporter(fn: () => Promise<boolean>) {
+    this._tryImportFromCli = fn;
   }
 
   /** Reset the "already prompted" guard so the next 401 will prompt again. */
@@ -116,7 +122,10 @@ export class ApiClient {
         // to avoid race with DB commit of the new API key
         if (Date.now() - this._lastLoginAt < 10_000) {
           await new Promise((r) => setTimeout(r, 2_000));
-          const retry = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
+          // Re-fetch the API key — it may have changed after re-login
+          const freshKey = await this.getApiKey();
+          const retryHeaders = { ...headers, Authorization: `Bearer ${freshKey}` };
+          const retry = await fetch(url, { method, headers: retryHeaders, body: body ? JSON.stringify(body) : undefined });
           if (retry.ok) return (await retry.json().catch(() => null)) as T;
         }
         this._onDidReceiveAuthError.fire();
@@ -130,6 +139,13 @@ export class ApiClient {
   private async promptReAuth() {
     if (this._authErrorPrompted) return;
     this._authErrorPrompted = true;
+
+    // Try to import a fresh key from CLI credentials before prompting the user
+    if (this._tryImportFromCli) {
+      const imported = await this._tryImportFromCli();
+      if (imported) return; // CLI had a valid key — re-imported silently
+    }
+
     try {
       const choice = await vscode.window.showWarningMessage(
         "Remb: Your session has expired or the API key is invalid.",
@@ -405,6 +421,7 @@ export class ApiClient {
         tags: string[];
         updatedAt: string;
       }>>;
+      dependencies: Record<string, { imports: string[]; importedBy: string[] }>;
     }>("GET", "/api/cli/context/files", undefined, { projectSlug });
   }
 }

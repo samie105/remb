@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { authenticateCliRequest } from "@/lib/cli-auth";
 import { createAdminClient } from "@/lib/supabase/server";
 import { getLatestCommitSha } from "@/lib/github-reader";
+import { getInternalApiUrl } from "@/lib/utils";
 
 /**
  * GET /api/cli/scan?scanId=<uuid>
@@ -191,8 +192,7 @@ export async function POST(request: Request) {
   }
 
   // Fire-and-forget to scan worker
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL
-    ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
+  const appUrl = getInternalApiUrl();
 
   fetch(`${appUrl}/api/scan/run`, {
     method: "POST",

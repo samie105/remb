@@ -67,6 +67,8 @@ export class ContextMirror implements vscode.Disposable {
   private refreshTimer: ReturnType<typeof setInterval> | undefined;
   private dirtyFiles = new Set<string>();
   private isSyncing = false;
+  /** Cached dependency data from last full sync */
+  private fileDeps: Record<string, { imports: string[]; importedBy: string[] }> = {};
 
   constructor(
     private api: ApiClient,
@@ -95,8 +97,16 @@ export class ContextMirror implements vscode.Disposable {
     // Initial sync after a short delay (let everything initialize)
     setTimeout(() => this.fullSync(), 5_000);
 
-    // Periodic sync every 5 minutes
-    this.refreshTimer = setInterval(() => this.fullSync(), 5 * 60_000);
+    // Incremental sync every 2 minutes (only dirty files), full sync every 10 minutes
+    let tickCount = 0;
+    this.refreshTimer = setInterval(() => {
+      tickCount++;
+      if (tickCount % 5 === 0) {
+        this.fullSync(); // Full sync every 10 minutes
+      } else if (this.dirtyFiles.size > 0) {
+        this.incrementalSync(); // Incremental only when dirty files exist
+      }
+    }, 2 * 60_000);
   }
 
   /** Full sync: fetch all file contexts from API and write .remb/ mirror. */
@@ -115,6 +125,9 @@ export class ContextMirror implements vscode.Disposable {
       const resp = await this.api.getFileContextMap(slug);
       if (!resp?.files) return;
 
+      // Cache dependency data for incremental syncs
+      this.fileDeps = resp.dependencies ?? {};
+
       const rembDir = vscode.Uri.joinPath(root, ".remb");
 
       // Ensure .remb directory exists
@@ -123,16 +136,53 @@ export class ContextMirror implements vscode.Disposable {
       // Write an index.md with project overview
       await this.writeIndex(root, slug, resp.files);
 
-      // Write per-file context mirrors
+      // Write per-file context mirrors (with dependency info)
       for (const [filePath, entries] of Object.entries(resp.files)) {
         if (!shouldMirror(filePath) || entries.length === 0) continue;
-        await this.writeMirrorFile(root, filePath, entries);
+        await this.writeMirrorFile(root, filePath, entries, this.fileDeps[filePath]);
       }
 
       // Clear dirty files since we just synced everything
       this.dirtyFiles.clear();
     } catch {
       // Non-fatal — mirror is best-effort
+    } finally {
+      this.isSyncing = false;
+    }
+  }
+
+  /** Incremental sync: only re-fetch and update dirty files. */
+  async incrementalSync(): Promise<void> {
+    if (this.isSyncing || this.dirtyFiles.size === 0) return;
+    this.isSyncing = true;
+
+    const filesToSync = [...this.dirtyFiles];
+    this.dirtyFiles.clear();
+
+    try {
+      const slug = this.workspace.projectSlug;
+      const isAuth = await this.auth.isAuthenticated();
+      if (!slug || !isAuth) return;
+
+      const root = vscode.workspace.workspaceFolders?.[0]?.uri;
+      if (!root) return;
+
+      // Fetch full context map (API doesn't support per-file queries yet)
+      // but only write the dirty files
+      const resp = await this.api.getFileContextMap(slug);
+      if (!resp?.files) return;
+
+      // Update cached deps
+      if (resp.dependencies) this.fileDeps = resp.dependencies;
+
+      for (const filePath of filesToSync) {
+        const entries = resp.files[filePath];
+        if (!entries || entries.length === 0) continue;
+        await this.writeMirrorFile(root, filePath, entries, this.fileDeps[filePath]);
+      }
+    } catch {
+      // Non-fatal — re-add files as dirty for next attempt
+      for (const f of filesToSync) this.dirtyFiles.add(f);
     } finally {
       this.isSyncing = false;
     }
@@ -152,16 +202,29 @@ export class ContextMirror implements vscode.Disposable {
       tags: string[];
       updatedAt: string;
     }>,
+    deps?: { imports: string[]; importedBy: string[] },
   ): Promise<void> {
     const mirrorRel = toMirrorPath(filePath);
 
     // Build the markdown content
-    const header = [
+    const headerLines = [
       `# ${filePath}`,
       `> Auto-generated context by Remb. Updated: ${new Date().toISOString().slice(0, 16)}`,
       `> Source: \`${filePath}\``,
-      "",
-    ].join("\n");
+    ];
+
+    // Dependency info
+    if (deps) {
+      if (deps.imports.length > 0) {
+        headerLines.push(`> **Imports:** ${deps.imports.slice(0, 10).join(", ")}${deps.imports.length > 10 ? ` (+${deps.imports.length - 10} more)` : ""}`);
+      }
+      if (deps.importedBy.length > 0) {
+        headerLines.push(`> **Imported by:** ${deps.importedBy.slice(0, 10).join(", ")}${deps.importedBy.length > 10 ? ` (+${deps.importedBy.length - 10} more)` : ""}`);
+      }
+    }
+    headerLines.push("");
+
+    const header = headerLines.join("\n");
 
     const sections: string[] = [];
     for (const entry of entries) {

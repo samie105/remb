@@ -4,6 +4,7 @@ import { cookies } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/server";
 import { getSession } from "@/lib/auth";
 import { getLatestCommitSha } from "@/lib/github-reader";
+import { getInternalApiUrl } from "@/lib/utils";
 import type { ScanJobRow } from "@/lib/supabase/types";
 
 /* ─── types ─── */
@@ -240,8 +241,7 @@ export async function createScanJob(
   // We fire-and-forget the fetch — the route runs independently with its
   // own serverless function timeout (maxDuration = 300s) so it won't be
   // killed when this Server Action returns.
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL
-    ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
+  const appUrl = getInternalApiUrl();
 
   fetch(`${appUrl}/api/scan/run`, {
     method: "POST",

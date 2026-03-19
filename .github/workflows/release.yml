@@ -11,10 +11,52 @@ permissions:
   id-token: write
 
 jobs:
+  # ── 0. Run tests across all packages ───────────────────────────────────────
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Install root dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run server route tests
+        run: npx vitest run app/api/cli/
+
+      - name: Install & test VS Code extension
+        working-directory: packages/vscode-extension
+        run: |
+          pnpm install --frozen-lockfile
+          npx vitest run
+
+      - name: Install & test Node CLI
+        working-directory: packages/cli
+        run: |
+          pnpm install --frozen-lockfile
+          npx vitest run --testTimeout 10000
+
+      - name: Run Go CLI tests
+        working-directory: packages/cli-go
+        run: go test ./...
+
   # ── 1. Build Go binaries and upload to GitHub Release ──────────────────────
   release-go:
     name: Build & Release Go CLI
     runs-on: ubuntu-latest
+    needs: test
     steps:
       - uses: actions/checkout@v4
 
@@ -59,6 +101,7 @@ jobs:
   release-npm-cli:
     name: Publish Node CLI to npm
     runs-on: ubuntu-latest
+    needs: test
     steps:
       - uses: actions/checkout@v4
 
@@ -95,7 +138,7 @@ jobs:
   release-npm-wrapper:
     name: Publish npm binary wrapper
     runs-on: ubuntu-latest
-    needs: release-go        # binary must exist before wrapper publishes
+    needs: [test, release-go]        # binary must exist before wrapper publishes
     steps:
       - uses: actions/checkout@v4
 
@@ -120,6 +163,7 @@ jobs:
   release-vscode:
     name: Publish VS Code Extension
     runs-on: ubuntu-latest
+    needs: test
     steps:
       - uses: actions/checkout@v4
 
@@ -167,7 +211,7 @@ jobs:
   update-homebrew:
     name: Update Homebrew Tap
     runs-on: ubuntu-latest
-    needs: release-go
+    needs: [test, release-go]
     steps:
       - uses: actions/checkout@v4
 

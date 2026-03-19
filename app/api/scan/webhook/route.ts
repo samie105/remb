@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
+import { getInternalApiUrl } from "@/lib/utils";
 import { runScan } from "@/lib/scan-runner";
 import { timingSafeEqual, createHmac } from "node:crypto";
 
@@ -121,8 +122,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Dispatch scan worker (fire-and-forget)
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL
-      ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
+    const appUrl = getInternalApiUrl();
 
     fetch(`${appUrl}/api/scan/run`, {
       method: "POST",

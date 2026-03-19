@@ -16,6 +16,8 @@ export class SessionTracker implements vscode.Disposable {
   private disposables: vscode.Disposable[] = [];
   private sessionStartTime = new Date();
 
+  private started = false;
+
   constructor(
     private api: ApiClient,
     private workspace: WorkspaceDetector,
@@ -24,9 +26,24 @@ export class SessionTracker implements vscode.Disposable {
 
   /** Start tracking. Call once after extension activates. */
   async start(): Promise<void> {
+    // Listen for late auth so the tracker can initialize if user signs in after activation
+    this.disposables.push(
+      this.auth.onDidChangeAuth(async (isLoggedIn) => {
+        if (isLoggedIn && !this.started) {
+          await this.initSession();
+        }
+      })
+    );
+
+    await this.initSession();
+  }
+
+  private async initSession(): Promise<void> {
+    if (this.started) return;
     const isAuth = await this.auth.isAuthenticated();
     const slug = this.workspace.projectSlug;
     if (!isAuth || !slug) return;
+    this.started = true;
 
     // Log session start (fire-and-forget, non-blocking)
     this.api

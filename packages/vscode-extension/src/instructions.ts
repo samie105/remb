@@ -236,9 +236,22 @@ export class InstructionsManager {
         await vscode.workspace.fs.createDirectory(dirUri);
       } catch { /* already exists */ }
 
-      const content = target.frontmatter
+      let content = target.frontmatter
         ? `---\napplyTo: "**"\n---\n${dynamicBody}`
         : dynamicBody;
+
+      // Preserve CLI-generated static sections (<!-- remb:start --> / <!-- remb:end -->)
+      try {
+        const existing = Buffer.from(
+          await vscode.workspace.fs.readFile(fileUri)
+        ).toString("utf-8");
+        const markerStart = existing.indexOf("<!-- remb:start -->");
+        const markerEnd = existing.indexOf("<!-- remb:end -->");
+        if (markerStart !== -1 && markerEnd !== -1) {
+          const staticBlock = existing.slice(markerStart, markerEnd + "<!-- remb:end -->".length);
+          content += `\n\n${staticBlock}\n`;
+        }
+      } catch { /* file doesn't exist yet — no static block to preserve */ }
 
       await vscode.workspace.fs.writeFile(
         fileUri,

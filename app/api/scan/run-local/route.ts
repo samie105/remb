@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
+import { getInternalApiUrl } from "@/lib/utils";
 import { extractFeaturesFromFile, generateEmbedding } from "@/lib/openai";
 import type { ScanLogEntry, ScanResult } from "@/lib/scan-actions";
 import type { Json } from "@/lib/supabase/types";
@@ -278,8 +279,7 @@ export async function POST(request: NextRequest) {
       .eq("id", projectId);
 
     // Trigger queue processing — free up a slot for the next queued scan
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL
-      ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
+    const appUrl = getInternalApiUrl();
     if (secret) {
       fetch(`${appUrl}/api/scan/process-queue`, {
         method: "POST",

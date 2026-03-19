@@ -89,10 +89,13 @@ export class AuthManager {
     vscode.window.showInformationMessage("Signed out of Remb.");
   }
 
-  /** Try to import API key from CLI credentials file (~/.config/remb/credentials). */
-  async tryImportFromCli(): Promise<boolean> {
-    const existing = await this.getApiKey();
-    if (existing) return true; // Already authenticated
+  /** Try to import API key from CLI credentials file (~/.config/remb/credentials).
+   *  If force=true, re-imports even if a key already exists (used on auth failure). */
+  async tryImportFromCli(force = false): Promise<boolean> {
+    if (!force) {
+      const existing = await this.getApiKey();
+      if (existing) return true; // Already authenticated
+    }
 
     const xdg = process.env.XDG_CONFIG_HOME;
     const base = xdg || resolve(homedir(), ".config");
@@ -107,6 +110,10 @@ export class AuthManager {
         if (trimmed.startsWith("api_key=")) {
           const key = trimmed.slice("api_key=".length).trim();
           if (key.startsWith("remb_")) {
+            // Skip if CLI has the same key we already have
+            const current = await this.getApiKey();
+            if (current === key) return false;
+
             await this.secrets.store(SECRET_KEY, key);
             this._onDidChangeAuth.fire(true);
             return true;

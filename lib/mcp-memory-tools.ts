@@ -527,6 +527,26 @@ export function getBuiltinTools(): AggregatedTool[] {
       _serverId: "__builtin__",
       _originalName: "diff_analyze",
     },
+    {
+      name: `${PREFIX}__scan_on_push`,
+      description: "[Remb] Toggle auto-scan on push for a project. When enabled, pushing to the configured branch automatically triggers a scan via GitHub webhook.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          project_slug: {
+            type: "string",
+            description: "Project slug",
+          },
+          enabled: {
+            type: "boolean",
+            description: "Whether to enable (true) or disable (false) auto-scan on push",
+          },
+        },
+        required: ["project_slug", "enabled"],
+      },
+      _serverId: "__builtin__",
+      _originalName: "scan_on_push",
+    },
     // ─── Cross-project tools ───
     {
       name: `${PREFIX}__cross_project_search`,
@@ -1414,7 +1434,7 @@ export async function callBuiltinTool(
       // Touch memories
       const memIds = memories.map((m) => m.id);
       if (memIds.length > 0) {
-        await db.rpc("touch_memories", { memory_ids: memIds }).catch(() => {});
+        try { await db.rpc("touch_memories", { memory_ids: memIds }); } catch { /* non-fatal */ }
       }
 
       const features = featRes.data ?? [];
@@ -1525,8 +1545,8 @@ export async function callBuiltinTool(
       if (scanErr) throw new Error(scanErr.message);
 
       // Fire-and-forget to scan worker
-      const appUrl = process.env.NEXT_PUBLIC_APP_URL
-        ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
+      const { getInternalApiUrl } = await import("@/lib/utils");
+      const appUrl = getInternalApiUrl();
 
       fetch(`${appUrl}/api/scan/run`, {
         method: "POST",
@@ -1660,6 +1680,103 @@ export async function callBuiltinTool(
             analyzed: changes.length,
             changes: changes.map((c) => ({ feature: c.feature_name, category: c.category, files: c.files_changed })),
           }, null, 2),
+        }],
+      };
+    }
+
+    case "scan_on_push": {
+      const slug = args.project_slug as string;
+      if (!slug) throw new Error("project_slug is required");
+      const enabled = args.enabled as boolean;
+      if (typeof enabled !== "boolean") throw new Error("enabled must be a boolean");
+
+      const { data: project } = await db
+        .from("projects")
+        .select("id, repo_name, branch, scan_on_push, webhook_secret, github_webhook_id")
+        .eq("user_id", userId)
+        .eq("slug", slug)
+        .single();
+
+      if (!project) throw new Error(`Project "${slug}" not found`);
+      if (!project.repo_name) throw new Error("Project has no connected repository");
+
+      const { data: userRow } = await db
+        .from("users")
+        .select("github_token")
+        .eq("id", userId)
+        .single();
+
+      const githubToken = userRow?.github_token;
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL
+        ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
+
+      const updates: Record<string, unknown> = { scan_on_push: enabled };
+
+      if (enabled) {
+        let secret = project.webhook_secret;
+        if (!secret) {
+          const { randomBytes } = await import("node:crypto");
+          secret = randomBytes(32).toString("hex");
+          updates.webhook_secret = secret;
+        }
+        if (githubToken && !project.github_webhook_id) {
+          try {
+            const res = await fetch(
+              `https://api.github.com/repos/${project.repo_name}/hooks`,
+              {
+                method: "POST",
+                headers: {
+                  Authorization: `Bearer ${githubToken}`,
+                  Accept: "application/vnd.github+json",
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  name: "web",
+                  active: true,
+                  events: ["push"],
+                  config: {
+                    url: `${appUrl}/api/scan/webhook`,
+                    content_type: "json",
+                    secret,
+                    insecure_ssl: "0",
+                  },
+                }),
+              },
+            );
+            if (res.ok) {
+              const hook = await res.json() as { id: number };
+              updates.github_webhook_id = hook.id;
+            }
+          } catch { /* non-fatal */ }
+        }
+      } else {
+        if (githubToken && project.github_webhook_id) {
+          try {
+            await fetch(
+              `https://api.github.com/repos/${project.repo_name}/hooks/${project.github_webhook_id}`,
+              {
+                method: "DELETE",
+                headers: {
+                  Authorization: `Bearer ${githubToken}`,
+                  Accept: "application/vnd.github+json",
+                },
+              },
+            );
+          } catch { /* non-fatal */ }
+        }
+        updates.github_webhook_id = null;
+      }
+
+      await db.from("projects").update(updates).eq("id", project.id);
+
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            scan_on_push: enabled,
+            webhook_registered: enabled ? !!updates.github_webhook_id || !!project.github_webhook_id : false,
+            project: slug,
+          }),
         }],
       };
     }

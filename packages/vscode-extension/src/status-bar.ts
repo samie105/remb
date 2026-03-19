@@ -48,6 +48,10 @@ export class StatusBar {
       this.disposables.push(
         syncManager.onDidChangeSyncState((state) => {
           this.syncState = state;
+          // Clear network error on successful sync (connectivity restored)
+          if (this.errorState === "network" && state.kind !== "unknown") {
+            this.errorState = null;
+          }
           this.update();
         })
       );

@@ -12,10 +12,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/useremb/remb/internal/config"
 	"github.com/useremb/remb/internal/credentials"
 	"github.com/useremb/remb/internal/output"
-	"github.com/spf13/cobra"
 )
 
 var loginKey string
@@ -81,6 +81,26 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		}
 		output.Error("No API key provided via stdin.")
 		os.Exit(1)
+	}
+
+	// Check if already authenticated
+	if existingKey := credentials.GetAPIKey(); existingKey != "" {
+		if login := verifyExistingKey(existingKey); login != "" {
+			fmt.Println()
+			output.Success("Already authenticated as " + output.Bold(login) + "!")
+			if len(existingKey) > 4 {
+				output.KeyValue("Key", "remb_..."+existingKey[len(existingKey)-4:])
+			}
+			output.KeyValue("Credentials", credentials.GetCredentialsFilePath())
+			fmt.Println()
+			fmt.Print("  " + output.Bold("Re-authenticate anyway?") + " " + output.Dim("[y/N]") + ": ")
+			reader := bufio.NewReader(os.Stdin)
+			answer, _ := reader.ReadString('\n')
+			if strings.TrimSpace(strings.ToLower(answer)) != "y" {
+				return nil
+			}
+			fmt.Println()
+		}
 	}
 
 	// TTY: ask the user
@@ -254,4 +274,30 @@ func saveAndConfirm(key string) error {
 	output.Info("Run " + output.Bold("remb get -p <project>") + " to verify your key works.")
 
 	return nil
+}
+
+// verifyExistingKey makes a lightweight API call to check if the key is valid.
+// Returns the GitHub login on success, or empty string if invalid/error.
+func verifyExistingKey(apiKey string) string {
+	baseURL := getBaseURL()
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	req, err := http.NewRequest("GET", baseURL+"/api/cli/projects?limit=1", nil)
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("User-Agent", "remb-cli/0.1.0")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+
+	return "authenticated user"
 }

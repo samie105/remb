@@ -528,18 +528,25 @@ export function registerTreeViews(
     vscode.window.registerTreeDataProvider("remb.mcpServersView", mcpServersTree)
   );
 
-  // Refresh when auth or project changes
-  auth.onDidChangeAuth(() => {
-    memoriesTree.refresh();
-    projectsTree.refresh();
-    contextTree.refresh();
-    mcpServersTree.refresh();
-  });
-  workspace.onDidChangeProject(() => {
-    contextTree.refresh();
-    projectsTree.refresh();
-    memoriesTree.refresh();
-  });
+  // Track event subscriptions for proper disposal
+  context.subscriptions.push(
+    auth.onDidChangeAuth(() => {
+      memoriesTree.refresh();
+      projectsTree.refresh();
+      contextTree.refresh();
+      mcpServersTree.refresh();
+    }),
+    workspace.onDidChangeProject(() => {
+      contextTree.refresh();
+      projectsTree.refresh();
+      memoriesTree.refresh();
+    }),
+    // Dispose tree provider EventEmitters
+    { dispose: () => memoriesTree["_onDidChangeTreeData"].dispose() },
+    { dispose: () => projectsTree["_onDidChangeTreeData"].dispose() },
+    { dispose: () => contextTree["_onDidChangeTreeData"].dispose() },
+    { dispose: () => mcpServersTree["_onDidChangeTreeData"].dispose() },
+  );
 
   return { memoriesTree, projectsTree, contextTree, mcpServersTree };
 }

@@ -87,5 +87,20 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  return NextResponse.json({ files: fileContextMap });
+  // File dependency graph for dependency-aware mirror
+  const { data: deps } = await db
+    .from("file_dependencies")
+    .select("source_path, target_path, import_type, imported_symbols")
+    .eq("project_id", project.id);
+
+  // Build imports/imported-by maps
+  const fileDeps: Record<string, { imports: string[]; importedBy: string[] }> = {};
+  for (const d of deps ?? []) {
+    if (!fileDeps[d.source_path]) fileDeps[d.source_path] = { imports: [], importedBy: [] };
+    if (!fileDeps[d.target_path]) fileDeps[d.target_path] = { imports: [], importedBy: [] };
+    fileDeps[d.source_path].imports.push(d.target_path);
+    fileDeps[d.target_path].importedBy.push(d.source_path);
+  }
+
+  return NextResponse.json({ files: fileContextMap, dependencies: fileDeps });
 }
