@@ -4,9 +4,18 @@
 
 set -e
 
-REPO="useremb/remb"
-INSTALL_DIR="/usr/local/bin"
+REPO="samie105/remb"
 BINARY="remb"
+
+# Prefer a user-owned directory so no sudo is required.
+# Priority: ~/.local/bin → ~/bin → /usr/local/bin (fallback with sudo)
+if [ -d "$HOME/.local/bin" ] || ! [ -d "/usr/local/bin" ] || [ -w "/usr/local/bin" ] 2>/dev/null; then
+  INSTALL_DIR="$HOME/.local/bin"
+elif [ -d "$HOME/bin" ]; then
+  INSTALL_DIR="$HOME/bin"
+else
+  INSTALL_DIR="$HOME/.local/bin"
+fi
 
 # Detect OS
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
@@ -51,7 +60,10 @@ TMP_DIR=$(mktemp -d)
 curl -fsSL "$DOWNLOAD_URL" -o "${TMP_DIR}/${BINARY}${EXT}"
 chmod +x "${TMP_DIR}/${BINARY}${EXT}"
 
-# Install — try without sudo first, fall back to sudo
+# Ensure the install directory exists
+mkdir -p "$INSTALL_DIR"
+
+# Install — no sudo needed for user-owned directory; fall back to sudo for system dirs
 if [ -w "$INSTALL_DIR" ]; then
   mv "${TMP_DIR}/${BINARY}${EXT}" "${INSTALL_DIR}/${BINARY}${EXT}"
 else
@@ -60,6 +72,23 @@ else
 fi
 
 rm -rf "$TMP_DIR"
+
+# Ensure the install dir is on PATH and inform the user
+SHELL_RC=""
+case "$SHELL" in
+  */zsh)  SHELL_RC="$HOME/.zshrc" ;;
+  */bash) SHELL_RC="${HOME}/.bashrc" ;;
+esac
+
+PATH_LINE="export PATH=\"${INSTALL_DIR}:\$PATH\""
+if [ -n "$SHELL_RC" ] && ! grep -qF "$INSTALL_DIR" "$SHELL_RC" 2>/dev/null; then
+  echo "" >> "$SHELL_RC"
+  echo "# Added by remb installer" >> "$SHELL_RC"
+  echo "$PATH_LINE" >> "$SHELL_RC"
+  echo ""
+  echo "NOTE: ${INSTALL_DIR} added to PATH in ${SHELL_RC}"
+  echo "      Run: source ${SHELL_RC}   (or open a new terminal)"
+fi
 
 echo ""
 echo "✔ remb v${VERSION} installed to ${INSTALL_DIR}/${BINARY}${EXT}"

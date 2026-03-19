@@ -107,6 +107,6 @@ Or use the remote SSE server — no local install required:
 ## Links
 
 - [Website](https://useremb.com)
-- [GitHub](https://github.com/useremb/remb)
+- [GitHub](https://github.com/samie105/remb)
 - [VS Code Extension](https://marketplace.visualstudio.com/items?itemName=remb.remb)
 - [Go CLI (remb-go)](https://www.npmjs.com/package/remb-go)

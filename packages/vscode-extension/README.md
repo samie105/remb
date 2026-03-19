@@ -80,6 +80,6 @@ Access via Command Palette (`Cmd+Shift+P`):
 ## Links
 
 - [Website](https://useremb.com)
-- [GitHub](https://github.com/useremb/remb)
+- [GitHub](https://github.com/samie105/remb)
 - [npm (Node CLI)](https://www.npmjs.com/package/remb-cli)
 - [npm (Go CLI)](https://www.npmjs.com/package/remb-go)

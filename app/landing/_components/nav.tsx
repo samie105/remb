@@ -48,7 +48,7 @@ export function Nav({ activeSection, scrollTo }: NavProps) {
         {/* Right side */}
         <div className="flex items-center gap-3">
           <a
-            href="https://github.com/useremb/remb"
+            href="https://github.com/samie105/remb"
             target="_blank"
             rel="noopener noreferrer"
             className="text-[oklch(0.55_0_0)] hover:text-[oklch(0.93_0_0)] transition-colors"

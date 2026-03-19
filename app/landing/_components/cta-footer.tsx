@@ -22,7 +22,7 @@ export function CtaSection({ scrollTo }: CtaProps) {
             <ArrowRight className="size-3.5 group-hover:translate-x-0.5 transition-transform" />
           </button>
           <a
-            href="https://github.com/useremb/remb"
+            href="https://github.com/samie105/remb"
             target="_blank"
             rel="noopener noreferrer"
             className="w-full sm:w-auto px-5 py-2.5 text-[13px] font-medium rounded-lg border border-[oklch(1_0_0/8%)] bg-[oklch(1_0_0/3%)] text-[oklch(0.78_0_0)] hover:bg-[oklch(1_0_0/6%)] transition-colors flex items-center justify-center gap-2"
@@ -51,7 +51,7 @@ export function FooterSection() {
         </div>
         <div className="flex flex-wrap items-center justify-center gap-4 md:gap-5 text-[12px] text-[oklch(0.45_0_0)]">
           <a
-            href="https://github.com/useremb/remb"
+            href="https://github.com/samie105/remb"
             target="_blank"
             rel="noopener noreferrer"
             className="hover:text-[oklch(0.78_0_0)] transition-colors flex items-center gap-1.5"

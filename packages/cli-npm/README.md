@@ -10,7 +10,7 @@ This package downloads and installs the pre-built Go binary for your platform vi
 npm install -g remb-go
 ```
 
-This runs a postinstall script that downloads the correct binary for your OS and architecture from [GitHub Releases](https://github.com/useremb/remb/releases).
+This runs a postinstall script that downloads the correct binary for your OS and architecture from [GitHub Releases](https://github.com/samie105/remb/releases).
 
 ### Alternative installation methods
 
@@ -18,7 +18,7 @@ This runs a postinstall script that downloads the correct binary for your OS and
 |--------|---------|
 | **curl** (recommended) | `curl -fsSL https://useremb.com/install.sh \| sh` |
 | **Homebrew** | `brew tap samie105/remb && brew install remb` |
-| **Go install** | `go install github.com/useremb/remb@latest` |
+| **Go install** | `go install github.com/samie105/remb@latest` |
 
 ## Supported Platforms
 
@@ -59,6 +59,6 @@ Both CLIs have the same feature set. Use `remb-go` when you want maximum perform
 ## Links
 
 - [Website](https://useremb.com)
-- [GitHub](https://github.com/useremb/remb)
+- [GitHub](https://github.com/samie105/remb)
 - [VS Code Extension](https://marketplace.visualstudio.com/items?itemName=remb.remb)
 - [Node CLI (remb-cli)](https://www.npmjs.com/package/remb-cli)

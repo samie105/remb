@@ -20,12 +20,12 @@ make install
 ### Go install
 
 ```bash
-go install github.com/useremb/remb@latest
+go install github.com/samie105/remb@latest
 ```
 
 ### Manual download
 
-Download pre-built binaries from [GitHub Releases](https://github.com/useremb/remb/releases):
+Download pre-built binaries from [GitHub Releases](https://github.com/samie105/remb/releases):
 
 | Platform | Binary |
 |----------|--------|
