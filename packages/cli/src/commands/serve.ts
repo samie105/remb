@@ -1,11 +1,15 @@
 import { Command } from "commander";
 import chalk from "chalk";
+import { createRequire } from "module";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { createApiClient } from "../lib/api-client.js";
 import { findProjectConfig } from "../lib/config.js";
 import { info, error as logError, success } from "../lib/output.js";
+
+const require = createRequire(import.meta.url);
+const pkg = require("../../package.json") as { version: string };
 
 export const serveCommand = new Command("serve")
   .description("Start the MCP server for AI tool integration")
@@ -26,7 +30,7 @@ export const serveCommand = new Command("serve")
 
     const server = new McpServer({
       name: "remb",
-      version: "0.1.0",
+      version: pkg.version,
     });
 
     // ── Tool: save_context ──────────────────────────────────
