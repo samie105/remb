@@ -151,11 +151,14 @@ func printHistoryTimeline(result *api.ConversationHistoryResponse) {
 		fmt.Fprintf(os.Stderr, "  \033[1;34m%s\033[0m\n", date)
 		for _, e := range entries {
 			time := e.CreatedAt[11:16]
-			icon := "\033[36m●\033[0m" // cyan dot = summary
-			if e.Type == "tool_call" {
+			var icon string
+			switch e.Type {
+			case "tool_call":
 				icon = "\033[33m⚡\033[0m" // yellow bolt = tool call
-			} else if e.Type == "milestone" {
+			case "milestone":
 				icon = "\033[32m◆\033[0m" // green diamond = milestone
+			default:
+				icon = "\033[36m●\033[0m" // cyan dot = summary
 			}
 			src := ""
 			if e.Source != "mcp" {
@@ -190,11 +193,14 @@ func printHistoryMarkdown(entries []api.ConversationEntry) {
 		fmt.Printf("## %s\n\n", date)
 		for _, e := range dayEntries {
 			time := e.CreatedAt[11:16]
-			icon := "💬"
-			if e.Type == "tool_call" {
+			var icon string
+			switch e.Type {
+			case "tool_call":
 				icon = "🔧"
-			} else if e.Type == "milestone" {
+			case "milestone":
 				icon = "🏁"
+			default:
+				icon = "💬"
 			}
 			src := ""
 			if e.Source != "mcp" {

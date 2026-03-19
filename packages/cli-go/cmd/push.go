@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/useremb/remb/internal/api"
 	"github.com/useremb/remb/internal/output"
-	"github.com/spf13/cobra"
 )
 
 var pushProject string
@@ -152,7 +152,8 @@ func pollScanProgress(client *api.Client, scanID string) {
 		fmt.Print("\r\033[K") // clear spinner
 		fmt.Println()
 
-		if status.Status == "done" {
+		switch status.Status {
+		case "done":
 			dur := ""
 			if status.DurationMs > 0 {
 				dur = fmt.Sprintf(" \033[2min %s\033[0m", formatDur(status.DurationMs))
@@ -162,7 +163,7 @@ func pollScanProgress(client *api.Client, scanID string) {
 			if status.Errors > 0 {
 				output.Warn(fmt.Sprintf("%d file(s) had errors during scanning.", status.Errors))
 			}
-		} else if status.Status == "failed" {
+		case "failed":
 			output.Error("Scan failed. Check the dashboard for details.")
 		}
 		break
