@@ -27,13 +27,13 @@ function projectsUseCommand() {
     .option("--api-url <url>", "API server URL to write into .remb.yml")
     .addHelpText(
       "after",
-      `\nExamples:\n  $ remb projects use my-app\n  $ remb projects switch my-app\n  $ remb projects use my-app --api-url https://useremb.com`,
+      `\nExamples:\n  $ remb projects use my-app\n  $ remb projects switch my-app\n  $ remb projects use my-app --api-url https://www.useremb.com`,
     )
     .action(async (slug: string, opts) => {
       const cwd = process.cwd();
       const existing = findProjectConfig(cwd);
       const configPath = resolve(existing?.dir ?? cwd, ".remb.yml");
-      const apiUrl = opts.apiUrl ?? existing?.config.api_url ?? "https://useremb.com";
+      const apiUrl = opts.apiUrl ?? existing?.config.api_url ?? "https://www.useremb.com";
       const ide = existing?.config.ide;
 
       // Validate the slug exists remotely

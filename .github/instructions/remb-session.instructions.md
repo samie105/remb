@@ -5,7 +5,7 @@ applyTo: '**'
 <!-- remb:start -->
 # Remb — Mandatory Session Protocol
 
-**Project**: `context-management` | **API**: `http://localhost:3000`
+**Project**: `context-management` | **API**: `https://www.useremb.com`
 
 ## MANDATORY — Follow These in EVERY Session
 

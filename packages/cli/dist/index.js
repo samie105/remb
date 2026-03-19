@@ -171,7 +171,7 @@ function keyValue(label, value) {
 import { resolve as resolve2, dirname as dirname2 } from "path";
 import { existsSync as existsSync2, readFileSync as readFileSync2, writeFileSync as writeFileSync2, mkdirSync as mkdirSync2 } from "fs";
 var CONFIG_FILENAME = ".remb.yml";
-var DEFAULT_API_URL = "https://useremb.com";
+var DEFAULT_API_URL = "https://www.useremb.com";
 function findProjectConfig(cwd = process.cwd()) {
   let dir = resolve2(cwd);
   while (true) {
@@ -553,7 +553,7 @@ function validatePositiveInt(value, field, max) {
 }
 
 // src/commands/login.ts
-var DEFAULT_API_URL2 = "https://useremb.com";
+var DEFAULT_API_URL2 = "https://www.useremb.com";
 function getBaseUrl() {
   const projectConfig = findProjectConfig();
   return (projectConfig?.config.api_url ?? DEFAULT_API_URL2).replace(/\/+$/, "");
@@ -1043,7 +1043,7 @@ Or connect to the hosted endpoint at \`${apiUrl}/api/mcp\` for aggregated MCP ac
 All commands respect the \`-p/--project <slug>\` flag or fall back to \`.remb.yml\` in the current directory tree.
 `;
 }
-var initCommand = new Command2("init").description("Initialize a project with remb tracking").argument("[project-name]", "Project name (defaults to directory name)").option("--api-url <url>", "API server URL", "https://useremb.com").option("--force", "Overwrite existing configuration", false).option(
+var initCommand = new Command2("init").description("Initialize a project with remb tracking").argument("[project-name]", "Project name (defaults to directory name)").option("--api-url <url>", "API server URL", "https://www.useremb.com").option("--force", "Overwrite existing configuration", false).option(
   "--ide <ide>",
   "IDE to configure (vscode, cursor, windsurf, cline, jetbrains, claude, aider, all)"
 ).action(async (projectName, opts) => {
@@ -1076,7 +1076,16 @@ var initCommand = new Command2("init").description("Initialize a project with re
   keyValue("API URL", opts.apiUrl);
   keyValue("IDE", ide);
   console.log();
-  const apiKey = getApiKey();
+  let apiKey = getApiKey();
+  if (!apiKey && process.stdout.isTTY) {
+    console.log(
+      chalk4.dim("  You're not signed in \u2014 signing in lets Remb register your project and sync context.")
+    );
+    const shouldLogin = await promptYesNo("  Sign in now?");
+    if (shouldLogin) {
+      apiKey = await runInlineLogin(opts.apiUrl);
+    }
+  }
   if (apiKey) {
     try {
       let repoUrl;
@@ -1105,7 +1114,7 @@ var initCommand = new Command2("init").description("Initialize a project with re
         info(`You can register it later from the dashboard.`);
       }
     }
-  } else {
+  } else if (!getApiKey()) {
     info(`Run ${chalk4.bold("remb login")} to register this project on the server.`);
   }
   const gitignorePath = resolve3(cwd, ".gitignore");
@@ -1238,6 +1247,66 @@ ${END_MARKER}`;
   }
   return injected;
 }
+async function promptYesNo(message) {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve6) => {
+    rl.question(`${message} ${chalk4.dim("[Y/n]")}: `, (answer) => {
+      rl.close();
+      const a = answer.trim().toLowerCase();
+      resolve6(a === "" || a === "y" || a === "yes");
+    });
+  });
+}
+async function openBrowser2(url) {
+  const { exec } = await import("child_process");
+  const { platform } = await import("os");
+  const os = platform();
+  const cmd = os === "darwin" ? "open" : os === "win32" ? "start" : "xdg-open";
+  exec(`${cmd} ${JSON.stringify(url)}`);
+}
+async function runInlineLogin(apiUrl) {
+  const baseUrl = apiUrl.replace(/\/+$/, "");
+  try {
+    const res = await fetch(`${baseUrl}/api/cli/auth/start`, { method: "POST" });
+    if (!res.ok) {
+      warn("Could not start login flow.");
+      return null;
+    }
+    const { state, authUrl } = await res.json();
+    console.log();
+    info("Opening browser to authenticate...");
+    console.log(chalk4.dim(`  If the browser doesn't open, visit:`));
+    console.log(chalk4.dim(`  ${authUrl}`));
+    await openBrowser2(authUrl);
+    const ora11 = (await import("ora")).default;
+    const spinner = ora11("Waiting for browser authentication...").start();
+    const deadline = Date.now() + 12e4;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 2e3));
+      try {
+        const poll = await fetch(`${baseUrl}/api/cli/auth/poll?state=${encodeURIComponent(state)}`);
+        if (!poll.ok) continue;
+        const data = await poll.json();
+        if (data.status === "completed" && data.apiKey) {
+          spinner.stop();
+          const path = saveApiKey(data.apiKey);
+          console.log();
+          success(`Authenticated${data.login ? ` as ${chalk4.bold(data.login)}` : ""}!`);
+          keyValue("Credentials", path);
+          console.log();
+          return data.apiKey;
+        }
+        if (data.status === "expired") break;
+      } catch {
+      }
+    }
+    spinner.fail("Login timed out.");
+    return null;
+  } catch {
+    warn("Login failed \u2014 you can run `remb login` separately.");
+    return null;
+  }
+}
 var VALID_IDES = ["vscode", "cursor", "windsurf", "cline", "jetbrains", "claude", "aider", "all"];
 var IDE_LABELS = {
   vscode: "VS Code (GitHub Copilot)",
@@ -1249,6 +1318,15 @@ var IDE_LABELS = {
   aider: "Aider",
   all: "All / Multiple IDEs"
 };
+function detectIde() {
+  const env = process.env;
+  if (env.TERM_PROGRAM === "vscode" || env.VSCODE_PID) return "vscode";
+  if (env.TERM_PROGRAM === "cursor") return "cursor";
+  if (env.TERM_PROGRAM?.toLowerCase() === "windsurf") return "windsurf";
+  if (env.TERMINAL_EMULATOR?.includes("JetBrains")) return "jetbrains";
+  if (env.CLAUDE_CODE === "1" || env.TERM_PROGRAM === "claude") return "claude";
+  return null;
+}
 async function resolveIde(flagValue, configValue) {
   if (flagValue) {
     const normalized = flagValue.toLowerCase();
@@ -1261,6 +1339,11 @@ async function resolveIde(flagValue, configValue) {
   }
   if (configValue && VALID_IDES.includes(configValue)) {
     return configValue;
+  }
+  const detected = detectIde();
+  if (detected) {
+    info(`Detected IDE: ${chalk4.bold(IDE_LABELS[detected])}`);
+    return detected;
   }
   if (process.stdout.isTTY) {
     return promptIde();
@@ -1962,7 +2045,7 @@ var serveCommand = new Command7("serve").description("Start the MCP server for A
   }
   const server = new McpServer({
     name: "remb",
-    version: "0.1.0"
+    version: "0.1.5"
   });
   server.tool(
     "save_context",
@@ -2642,12 +2725,12 @@ function projectsUseCommand() {
 Examples:
   $ remb projects use my-app
   $ remb projects switch my-app
-  $ remb projects use my-app --api-url https://useremb.com`
+  $ remb projects use my-app --api-url https://www.useremb.com`
   ).action(async (slug, opts) => {
     const cwd = process.cwd();
     const existing = findProjectConfig(cwd);
     const configPath = resolve5(existing?.dir ?? cwd, ".remb.yml");
-    const apiUrl = opts.apiUrl ?? existing?.config.api_url ?? "https://useremb.com";
+    const apiUrl = opts.apiUrl ?? existing?.config.api_url ?? "https://www.useremb.com";
     const ide = existing?.config.ide;
     const spinner = ora6(`Looking up project "${slug}"...`).start();
     try {
@@ -3254,7 +3337,7 @@ function printMarkdown(entries) {
 var program = new Command14();
 program.name("remb").description(
   "Persistent memory layer for AI coding sessions \u2014 save, retrieve, and visualize project context."
-).version("0.1.0", "-v, --version").configureHelp({
+).version("0.1.5", "-v, --version").configureHelp({
   sortSubcommands: true,
   subcommandTerm: (cmd) => chalk16.bold(cmd.name())
 });

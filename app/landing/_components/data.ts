@@ -174,9 +174,17 @@ export const SUPPORTED_TOOLS = [
 export const CLI_CMDS: CliCmdItem[] = [
   {
     cmd: "remb init",
-    desc: "Initialize project tracking. Connects GitHub, scans codebase, extracts features.",
+    desc: "Initialize project \u2014 detects IDE, injects AI context, registers on Remb.",
   },
   { cmd: "remb login", desc: "Authenticate via browser OAuth or API key." },
+  {
+    cmd: "remb push",
+    desc: "Trigger a cloud scan with live progress after pushing code.",
+  },
+  {
+    cmd: "remb scan",
+    desc: "Local scan \u2014 reads files from disk, groups by directory, uploads context.",
+  },
   {
     cmd: "remb save",
     desc: "Save a context entry for a specific feature or module.",
@@ -184,14 +192,6 @@ export const CLI_CMDS: CliCmdItem[] = [
   {
     cmd: "remb get",
     desc: "Retrieve context entries with filtering by feature.",
-  },
-  {
-    cmd: "remb scan",
-    desc: "Auto-scan a directory to generate context. Set depth, ignore patterns.",
-  },
-  {
-    cmd: "remb link",
-    desc: "Link features with dependency relationships (depends_on, extends, uses).",
   },
   {
     cmd: "remb serve",
@@ -212,7 +212,7 @@ export const INSTALL_METHODS: InstallMethodItem[] = [
   {
     label: "curl",
     desc: "Zero dependencies, Go binary",
-    cmd: "curl -fsSL https://useremb.com/install.sh | sh",
+    cmd: "curl -fsSL https://www.useremb.com/install.sh | sh",
   },
   { label: "npm", desc: "Node.js CLI", cmd: "npm install -g remb-cli" },
   {
@@ -232,19 +232,19 @@ export const QUICK_STEPS: QuickStepItem[] = [
     n: "1",
     title: "Install",
     desc: "Go binary is fastest \u2014 single binary, no runtime.",
-    code: "curl -fsSL https://useremb.com/install.sh | sh",
+    code: "curl -fsSL https://www.useremb.com/install.sh | sh",
   },
   {
     n: "2",
-    title: "Authenticate",
-    desc: "Opens browser for OAuth. Creates a scoped API token.",
-    code: "remb login",
+    title: "Initialize",
+    desc: "Auto-detects IDE, offers sign-in, registers project, injects AI context.",
+    code: "remb init",
   },
   {
     n: "3",
-    title: "Initialize",
-    desc: "Connects GitHub, scans codebase, extracts features.",
-    code: "remb init",
+    title: "Push",
+    desc: "Trigger a cloud scan to extract features from your codebase.",
+    code: "remb push",
   },
   {
     n: "4",
@@ -258,45 +258,31 @@ export const QUICK_STEPS: QuickStepItem[] = [
 export const HOW_STEPS: HowStepItem[] = [
   {
     num: "01",
-    title: "Connect & Scan",
-    desc: "Point Remb at your GitHub repo. It analyzes your entire codebase \u2014 folder structure, frameworks, dependencies, feature boundaries, and architectural patterns.",
+    title: "Install & Init",
+    desc: "Install the CLI, then run init \u2014 it auto-detects your IDE, offers to sign in, registers the project on Remb, and injects AI context into the right config files.",
     lines: [
+      { type: "cmd", text: "curl -fsSL https://www.useremb.com/install.sh | sh" },
       { type: "cmd", text: "remb init" },
-      { type: "out", text: "\u2714 Connected to github.com/you/my-app" },
-      {
-        type: "out",
-        text: "\u2714 Scanning 247 files across 12 directories...",
-      },
-      {
-        type: "out",
-        text: "\u2714 Extracted 31 features, 5 service boundaries",
-      },
-      {
-        type: "out",
-        text: "\u2714 Identified: Next.js 15, Prisma, tRPC, Tailwind",
-      },
+      { type: "out", text: "\u2139 Detected IDE: VS Code (GitHub Copilot)" },
+      { type: "out", text: "  Sign in now? [Y/n]: Y" },
+      { type: "out", text: "\u2714 Authenticated as samie105!" },
+      { type: "out", text: "\u2714 Project my-app initialized!" },
+      { type: "out", text: "\u2139 AI context injected into: .github/copilot-instructions.md" },
     ],
   },
   {
     num: "02",
-    title: "Learn & Remember",
-    desc: "As you code with AI, Remb captures decisions, patterns, and context. Memories are tiered by importance.",
+    title: "Scan & Remember",
+    desc: "Push your codebase to Remb. It analyzes every file \u2014 features, patterns, dependencies. Save decisions as persistent memories.",
     lines: [
+      { type: "cmd", text: "remb push" },
+      { type: "out", text: "\u2714 Scanning 247 files across 12 directories..." },
+      { type: "out", text: "\u2714 Extracted 31 features, 5 service boundaries" },
       {
         type: "cmd",
         text: 'remb save -f auth -c "Using PKCE OAuth with refresh rotation"',
       },
       { type: "out", text: "\u2714 Saved to auth (core tier)" },
-      { type: "cmd", text: "remb memory list --tier core" },
-      { type: "out", text: "  1. Auth: PKCE OAuth with refresh rotation" },
-      {
-        type: "out",
-        text: "  2. DB: Prisma with connection pooling via PgBouncer",
-      },
-      {
-        type: "out",
-        text: "  3. State: Zustand for client, server actions for mutations",
-      },
     ],
   },
   {

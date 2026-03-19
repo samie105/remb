@@ -1,6 +1,6 @@
 # remb-cli
 
-> Node.js CLI for [Remb](https://useremb.com) — persistent memory layer for AI coding sessions.
+> Node.js CLI for [Remb](https://www.useremb.com) — persistent memory layer for AI coding sessions.
 
 ## Install
 
@@ -10,7 +10,7 @@ npm install -g remb-cli
 
 > **Prefer the Go binary?** It's faster and has zero runtime dependencies:
 > ```bash
-> curl -fsSL https://useremb.com/install.sh | sh
+> curl -fsSL https://www.useremb.com/install.sh | sh
 > ```
 
 ## Quick Start
@@ -58,7 +58,7 @@ Created by `remb init` in your project root:
 
 ```yaml
 project: my-project
-api_url: https://useremb.com
+api_url: https://www.useremb.com
 ```
 
 ### Credentials (`~/.config/remb/credentials`)
@@ -106,7 +106,7 @@ Or use the remote SSE server — no local install required:
 
 ## Links
 
-- [Website](https://useremb.com)
+- [Website](https://www.useremb.com)
 - [GitHub](https://github.com/samie105/remb)
 - [VS Code Extension](https://marketplace.visualstudio.com/items?itemName=remb.remb)
 - [Go CLI (remb-go)](https://www.npmjs.com/package/remb-go)

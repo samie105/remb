@@ -6,7 +6,7 @@ import { execSync } from "node:child_process";
 import chalk from "chalk";
 import { writeProjectConfig, findProjectConfig } from "../lib/config.js";
 import { createApiClient, ApiError } from "../lib/api-client.js";
-import { getApiKey } from "../lib/credentials.js";
+import { getApiKey, saveApiKey } from "../lib/credentials.js";
 import { success, error, info, keyValue, warn } from "../lib/output.js";
 
 function generateAgentMd(slug: string, apiUrl: string): string {
@@ -314,7 +314,7 @@ All commands respect the \`-p/--project <slug>\` flag or fall back to \`.remb.ym
 export const initCommand = new Command("init")
   .description("Initialize a project with remb tracking")
   .argument("[project-name]", "Project name (defaults to directory name)")
-  .option("--api-url <url>", "API server URL", "https://useremb.com")
+  .option("--api-url <url>", "API server URL", "https://www.useremb.com")
   .option("--force", "Overwrite existing configuration", false)
   .option(
     "--ide <ide>",
@@ -365,8 +365,18 @@ export const initCommand = new Command("init")
     keyValue("IDE", ide);
     console.log();
 
-    // Auto-register project on server if logged in
-    const apiKey = getApiKey();
+    // Auto-register project on server if logged in (or offer to sign in)
+    let apiKey = getApiKey();
+    if (!apiKey && process.stdout.isTTY) {
+      console.log(
+        chalk.dim("  You're not signed in — signing in lets Remb register your project and sync context.")
+      );
+      const shouldLogin = await promptYesNo("  Sign in now?");
+      if (shouldLogin) {
+        apiKey = await runInlineLogin(opts.apiUrl);
+      }
+    }
+
     if (apiKey) {
       try {
         // Auto-detect git info
@@ -398,7 +408,7 @@ export const initCommand = new Command("init")
           info(`You can register it later from the dashboard.`);
         }
       }
-    } else {
+    } else if (!getApiKey()) {
       info(`Run ${chalk.bold("remb login")} to register this project on the server.`);
     }
 
@@ -562,6 +572,81 @@ function injectIntoIDEContextFiles(cwd: string, slug: string, apiUrl: string, id
   return injected;
 }
 
+// ─── Inline Login ─────────────────────────────────────────────────────────────
+
+async function promptYesNo(message: string): Promise<boolean> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => {
+    rl.question(`${message} ${chalk.dim("[Y/n]")}: `, (answer) => {
+      rl.close();
+      const a = answer.trim().toLowerCase();
+      resolve(a === "" || a === "y" || a === "yes");
+    });
+  });
+}
+
+/** Open a URL in the user's default browser. */
+async function openBrowser(url: string): Promise<void> {
+  const { exec } = await import("node:child_process");
+  const { platform } = await import("node:os");
+  const os = platform();
+  const cmd =
+    os === "darwin" ? "open" :
+    os === "win32" ? "start" :
+    "xdg-open";
+  exec(`${cmd} ${JSON.stringify(url)}`);
+}
+
+/** Run browser OAuth inline and return the API key, or null on failure. */
+async function runInlineLogin(apiUrl: string): Promise<string | null> {
+  const baseUrl = apiUrl.replace(/\/+$/, "");
+  try {
+    const res = await fetch(`${baseUrl}/api/cli/auth/start`, { method: "POST" });
+    if (!res.ok) {
+      warn("Could not start login flow.");
+      return null;
+    }
+
+    const { state, authUrl } = await res.json() as { state: string; authUrl: string };
+
+    console.log();
+    info("Opening browser to authenticate...");
+    console.log(chalk.dim(`  If the browser doesn't open, visit:`));
+    console.log(chalk.dim(`  ${authUrl}`));
+
+    await openBrowser(authUrl);
+
+    const ora = (await import("ora")).default;
+    const spinner = ora("Waiting for browser authentication...").start();
+
+    const deadline = Date.now() + 120_000;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 2_000));
+      try {
+        const poll = await fetch(`${baseUrl}/api/cli/auth/poll?state=${encodeURIComponent(state)}`);
+        if (!poll.ok) continue;
+        const data = await poll.json() as { status: string; apiKey?: string; login?: string };
+        if (data.status === "completed" && data.apiKey) {
+          spinner.stop();
+          const path = saveApiKey(data.apiKey);
+          console.log();
+          success(`Authenticated${data.login ? ` as ${chalk.bold(data.login)}` : ""}!`);
+          keyValue("Credentials", path);
+          console.log();
+          return data.apiKey;
+        }
+        if (data.status === "expired") break;
+      } catch { /* retry */ }
+    }
+
+    spinner.fail("Login timed out.");
+    return null;
+  } catch {
+    warn("Login failed — you can run `remb login` separately.");
+    return null;
+  }
+}
+
 // ─── IDE Resolution ───────────────────────────────────────────────────────────
 
 const VALID_IDES = ["vscode", "cursor", "windsurf", "cline", "jetbrains", "claude", "aider", "all"] as const;
@@ -578,6 +663,28 @@ const IDE_LABELS: Record<IDE, string> = {
   all:       "All / Multiple IDEs",
 };
 
+/** Try to detect the IDE from environment variables and running processes. */
+function detectIde(): string | null {
+  const env = process.env;
+
+  // VS Code sets TERM_PROGRAM=vscode in its integrated terminal
+  if (env.TERM_PROGRAM === "vscode" || env.VSCODE_PID) return "vscode";
+
+  // Cursor sets TERM_PROGRAM=cursor (it's an Electron fork of VS Code)
+  if (env.TERM_PROGRAM === "cursor") return "cursor";
+
+  // Windsurf sets TERM_PROGRAM=Windsurf
+  if (env.TERM_PROGRAM?.toLowerCase() === "windsurf") return "windsurf";
+
+  // JetBrains IDEs set TERMINAL_EMULATOR=JetBrains-JediTerm
+  if (env.TERMINAL_EMULATOR?.includes("JetBrains")) return "jetbrains";
+
+  // Claude Code typically runs via `claude` CLI — check parent command name
+  if (env.CLAUDE_CODE === "1" || env.TERM_PROGRAM === "claude") return "claude";
+
+  return null;
+}
+
 async function resolveIde(flagValue: string | undefined, configValue: string | undefined): Promise<string> {
   if (flagValue) {
     const normalized = flagValue.toLowerCase();
@@ -591,6 +698,13 @@ async function resolveIde(flagValue: string | undefined, configValue: string | u
 
   if (configValue && (VALID_IDES as readonly string[]).includes(configValue)) {
     return configValue;
+  }
+
+  // Try auto-detection from environment
+  const detected = detectIde();
+  if (detected) {
+    info(`Detected IDE: ${chalk.bold(IDE_LABELS[detected as IDE])}`);
+    return detected;
   }
 
   // Interactive prompt when running in a real terminal

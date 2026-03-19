@@ -66,7 +66,7 @@ Access via Command Palette (`Cmd+Shift+P`):
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `remb.apiUrl` | `https://useremb.com` | API server URL |
+| `remb.apiUrl` | `https://www.useremb.com` | API server URL |
 | `remb.autoLoadContext` | `true` | Auto-load context on startup |
 | `remb.contextRefreshIntervalMinutes` | `2` | Context refresh interval |
 
@@ -79,7 +79,7 @@ Access via Command Palette (`Cmd+Shift+P`):
 
 ## Links
 
-- [Website](https://useremb.com)
+- [Website](https://www.useremb.com)
 - [GitHub](https://github.com/samie105/remb)
 - [npm (Node CLI)](https://www.npmjs.com/package/remb-cli)
 - [npm (Go CLI)](https://www.npmjs.com/package/remb-go)

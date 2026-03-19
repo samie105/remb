@@ -9,7 +9,7 @@ import (
 )
 
 const ConfigFilename = ".remb.yml"
-const DefaultAPIURL = "https://useremb.com"
+const DefaultAPIURL = "https://www.useremb.com"
 
 type ProjectConfig struct {
 	Project string

@@ -7,7 +7,7 @@ A fast, zero-dependency CLI for Remb — persistent memory layer for AI coding s
 ### One-liner (macOS / Linux)
 
 ```bash
-curl -fsSL https://useremb.com/install.sh | sh
+curl -fsSL https://www.useremb.com/install.sh | sh
 ```
 
 ### From source
@@ -80,7 +80,7 @@ remb serve
 **Project config** (`.remb.yml` — safe to commit):
 ```yaml
 project: my-project
-api_url: https://useremb.com
+api_url: https://www.useremb.com
 ```
 
 **Credentials** (`~/.config/remb/credentials` — keep secret):

@@ -2,7 +2,7 @@
 # Remb — AI Context Management Rules
 
 ## Project: `context-management`
-## API: `http://localhost:3000`
+## API: `https://www.useremb.com`
 
 ## MANDATORY — Conversation Tracking
 

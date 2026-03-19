@@ -106,12 +106,12 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("remb.refreshMcpServers", () => trees.mcpServersTree.refresh()),
     vscode.commands.registerCommand("remb.editMcpServers", () => {
       const config = vscode.workspace.getConfiguration("remb");
-      const baseUrl = config.get<string>("apiUrl") ?? "https://useremb.com";
+      const baseUrl = config.get<string>("apiUrl") ?? "https://www.useremb.com";
       vscode.env.openExternal(vscode.Uri.parse(`${baseUrl}/dashboard/mcp`));
     }),
     vscode.commands.registerCommand("remb.editMemoryOnWeb", () => {
       const config = vscode.workspace.getConfiguration("remb");
-      const baseUrl = config.get<string>("apiUrl") ?? "https://useremb.com";
+      const baseUrl = config.get<string>("apiUrl") ?? "https://www.useremb.com";
       const slug = workspace.projectSlug;
       const path = slug ? `/dashboard/${slug}/memory` : "/dashboard/memory";
       vscode.env.openExternal(vscode.Uri.parse(`${baseUrl}${path}`));

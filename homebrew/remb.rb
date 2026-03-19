@@ -11,7 +11,7 @@
 #   3. Update the sha256 hashes after each release (run: shasum -a 256 <binary>)
 class Remb < Formula
   desc "Persistent memory layer for AI coding sessions"
-  homepage "https://useremb.com"
+  homepage "https://www.useremb.com"
   version "0.1.0"
   license "MIT"
 

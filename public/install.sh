@@ -1,6 +1,6 @@
 #!/bin/sh
 # remb installer — downloads the right binary for your platform
-# Usage: curl -fsSL https://useremb.com/install.sh | sh
+# Usage: curl -fsSL https://www.useremb.com/install.sh | sh
 
 set -e
 

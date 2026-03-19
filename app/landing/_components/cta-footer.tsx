@@ -75,7 +75,7 @@ export function FooterSection() {
             npm
           </a>
           <a
-            href="https://useremb.com"
+            href="https://www.useremb.com"
             className="hover:text-[oklch(0.78_0_0)] transition-colors"
           >
             Dashboard

@@ -2,18 +2,22 @@ package cmd
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/useremb/remb/internal/api"
 	"github.com/useremb/remb/internal/config"
 	"github.com/useremb/remb/internal/credentials"
 	"github.com/useremb/remb/internal/output"
-	"github.com/spf13/cobra"
 )
 
 var initAPIURL string
@@ -349,8 +353,15 @@ func runInit(cmd *cobra.Command, args []string) {
 	output.KeyValue("IDE", ide)
 	fmt.Println()
 
-	// Auto-register project on server if logged in
+	// Auto-register project on server if logged in (or offer to sign in)
 	apiKey := credentials.GetAPIKey()
+	if apiKey == "" && isTerminal() {
+		fmt.Println(output.Dim("  You're not signed in — signing in lets Remb register your project and sync context."))
+		if promptYesNo("  Sign in now?") {
+			apiKey = runInlineLogin(initAPIURL)
+		}
+	}
+
 	if apiKey != "" {
 		// Auto-detect git info
 		var repoURL, repoName, branch string
@@ -382,7 +393,7 @@ func runInit(cmd *cobra.Command, args []string) {
 				output.Info("You can register it later from the dashboard.")
 			}
 		}
-	} else {
+	} else if credentials.GetAPIKey() == "" {
 		output.Info("Run " + output.Bold("remb login") + " to register this project on the server.")
 	}
 
@@ -403,6 +414,29 @@ func runInit(cmd *cobra.Command, args []string) {
 
 // ─── IDE Resolution ───────────────────────────────────────────────────────────
 
+// detectIDE checks environment variables to infer which IDE launched the terminal.
+func detectIDE() string {
+	term := os.Getenv("TERM_PROGRAM")
+	switch strings.ToLower(term) {
+	case "vscode":
+		return "vscode"
+	case "cursor":
+		return "cursor"
+	case "windsurf":
+		return "windsurf"
+	}
+	if os.Getenv("VSCODE_PID") != "" {
+		return "vscode"
+	}
+	if strings.Contains(os.Getenv("TERMINAL_EMULATOR"), "JetBrains") {
+		return "jetbrains"
+	}
+	if os.Getenv("CLAUDE_CODE") == "1" || term == "claude" {
+		return "claude"
+	}
+	return ""
+}
+
 func resolveIDE(flagValue, configValue string) string {
 	if flagValue != "" {
 		normalized := strings.ToLower(flagValue)
@@ -414,6 +448,16 @@ func resolveIDE(flagValue, configValue string) string {
 	}
 	if configValue != "" && isValidIDE(configValue) {
 		return configValue
+	}
+	// Try auto-detection from environment
+	if detected := detectIDE(); detected != "" {
+		for _, ide := range validIDEs {
+			if ide.value == detected {
+				output.Info("Detected IDE: " + output.Bold(ide.label))
+				break
+			}
+		}
+		return detected
 	}
 	// Interactive when connected to a real terminal
 	if isTerminal() {
@@ -461,6 +505,96 @@ func isTerminal() bool {
 		return false
 	}
 	return (fi.Mode() & os.ModeCharDevice) != 0
+}
+
+// ─── Inline Login ─────────────────────────────────────────────────────────────
+
+func promptYesNo(message string) bool {
+	fmt.Printf("%s %s: ", message, output.Dim("[Y/n]"))
+	reader := bufio.NewReader(os.Stdin)
+	line, _ := reader.ReadString('\n')
+	a := strings.TrimSpace(strings.ToLower(line))
+	return a == "" || a == "y" || a == "yes"
+}
+
+// runInlineLogin runs browser OAuth inline and returns the API key, or "" on failure.
+func runInlineLogin(apiURL string) string {
+	baseURL := strings.TrimRight(apiURL, "/")
+
+	resp, err := http.Post(baseURL+"/api/cli/auth/start", "application/json", nil)
+	if err != nil {
+		output.Warn("Could not start login flow.")
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		output.Warn("Could not start login flow.")
+		return ""
+	}
+
+	var startResp struct {
+		State   string `json:"state"`
+		AuthURL string `json:"authUrl"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&startResp); err != nil {
+		output.Warn("Could not parse login response.")
+		return ""
+	}
+
+	fmt.Println()
+	output.Info("Opening browser to authenticate...")
+	fmt.Println(output.Dim("  If the browser doesn't open, visit:"))
+	fmt.Println(output.Dim("  " + startResp.AuthURL))
+
+	openBrowser(startResp.AuthURL)
+
+	fmt.Print("⠋ Waiting for browser authentication...")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	deadline := time.Now().Add(120 * time.Second)
+
+	for time.Now().Before(deadline) {
+		time.Sleep(2 * time.Second)
+		u := fmt.Sprintf("%s/api/cli/auth/poll?state=%s", baseURL, url.QueryEscape(startResp.State))
+		pollResp, err := client.Get(u)
+		if err != nil {
+			continue
+		}
+		var data struct {
+			Status string `json:"status"`
+			APIKey string `json:"apiKey"`
+			Login  string `json:"login"`
+		}
+		err = json.NewDecoder(pollResp.Body).Decode(&data)
+		pollResp.Body.Close()
+		if err != nil {
+			continue
+		}
+		if data.Status == "completed" && data.APIKey != "" {
+			fmt.Print("\r\033[K")
+			path, saveErr := credentials.SaveAPIKey(data.APIKey)
+			if saveErr != nil {
+				output.Warn("Login succeeded but failed to save credentials.")
+				return ""
+			}
+			fmt.Println()
+			msg := "Authenticated"
+			if data.Login != "" {
+				msg += " as " + output.Bold(data.Login)
+			}
+			output.Success(msg + "!")
+			output.KeyValue("Credentials", path)
+			fmt.Println()
+			return data.APIKey
+		}
+		if data.Status == "expired" {
+			break
+		}
+	}
+
+	fmt.Print("\r\033[K")
+	output.Warn("Login timed out — you can run `remb login` separately.")
+	return ""
 }
 
 func injectIntoIDEContextFiles(cwd, slug, apiURL, ide string) []string {

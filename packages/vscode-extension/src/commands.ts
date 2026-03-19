@@ -203,7 +203,7 @@ export function registerCommands(
           const folders = vscode.workspace.workspaceFolders;
           if (folders && folders.length > 0) {
             const rembYmlUri = vscode.Uri.joinPath(folders[0].uri, ".remb.yml");
-            const content = `project: ${pick.description}\napi_url: ${vscode.workspace.getConfiguration("remb").get<string>("apiUrl") ?? "https://remb.vercel.app"}\n`;
+            const content = `project: ${pick.description}\napi_url: ${vscode.workspace.getConfiguration("remb").get<string>("apiUrl") ?? "https://www.useremb.com"}\n`;
             await vscode.workspace.fs.writeFile(rembYmlUri, Buffer.from(content, "utf-8"));
             vscode.window.showInformationMessage(`Switched to project "${pick.label}". Updated .remb.yml.`);
           } else {
@@ -221,7 +221,7 @@ export function registerCommands(
   context.subscriptions.push(
     vscode.commands.registerCommand("remb.openDashboard", () => {
       const config = vscode.workspace.getConfiguration("remb");
-      const baseUrl = config.get<string>("apiUrl") ?? "https://useremb.com";
+      const baseUrl = config.get<string>("apiUrl") ?? "https://www.useremb.com";
       vscode.env.openExternal(vscode.Uri.parse(`${baseUrl}/dashboard`));
     })
   );

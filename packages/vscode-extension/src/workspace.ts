@@ -121,7 +121,7 @@ function parseSimpleYaml(raw: string): ProjectConfig {
   }
   return {
     project: result.project ?? "",
-    api_url: result.api_url ?? "https://useremb.com",
+    api_url: result.api_url ?? "https://www.useremb.com",
     ide: result.ide || undefined,
   };
 }

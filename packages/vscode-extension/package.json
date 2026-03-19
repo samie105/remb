@@ -660,7 +660,7 @@
       "properties": {
         "remb.apiUrl": {
           "type": "string",
-          "default": "https://useremb.com",
+          "default": "https://www.useremb.com",
           "description": "Remb API server URL"
         },
         "remb.autoLoadContext": {

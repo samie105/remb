@@ -1,6 +1,6 @@
 # remb-go
 
-> Go binary installer for [Remb](https://useremb.com) — persistent memory layer for AI coding sessions.
+> Go binary installer for [Remb](https://www.useremb.com) — persistent memory layer for AI coding sessions.
 
 This package downloads and installs the pre-built Go binary for your platform via npm. The binary itself has **zero runtime dependencies** — Node.js is only used for the installation step.
 
@@ -16,7 +16,7 @@ This runs a postinstall script that downloads the correct binary for your OS and
 
 | Method | Command |
 |--------|---------|
-| **curl** (recommended) | `curl -fsSL https://useremb.com/install.sh \| sh` |
+| **curl** (recommended) | `curl -fsSL https://www.useremb.com/install.sh \| sh` |
 | **Homebrew** | `brew tap samie105/remb && brew install remb` |
 | **Go install** | `go install github.com/samie105/remb@latest` |
 
@@ -58,7 +58,7 @@ Both CLIs have the same feature set. Use `remb-go` when you want maximum perform
 
 ## Links
 
-- [Website](https://useremb.com)
+- [Website](https://www.useremb.com)
 - [GitHub](https://github.com/samie105/remb)
 - [VS Code Extension](https://marketplace.visualstudio.com/items?itemName=remb.remb)
 - [Node CLI (remb-cli)](https://www.npmjs.com/package/remb-cli)

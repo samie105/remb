@@ -80,7 +80,7 @@ async function main() {
       console.warn(`remb: permission denied writing to ${BIN_DIR}`);
       console.warn(`remb: this usually means npm's global prefix is owned by root.`);
       console.warn(`remb: fix with one of:`);
-      console.warn(`remb:   curl -fsSL https://useremb.com/install.sh | sh   (recommended — no sudo needed)`);
+      console.warn(`remb:   curl -fsSL https://www.useremb.com/install.sh | sh   (recommended — no sudo needed)`);
       console.warn(`remb:   npm config set prefix ~/.npm-global && export PATH=~/.npm-global/bin:$PATH`);
       console.warn(`remb:   brew tap samie105/remb && brew install remb`);
     } else {
