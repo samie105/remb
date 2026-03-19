@@ -37,6 +37,11 @@ export async function activate(context: vscode.ExtensionContext) {
   // ── API client ────────────────────────────────────────────
   const api = new ApiClient(() => auth.getApiKey());
 
+  // Notify API client of fresh logins so it can retry early 401s
+  auth.onDidChangeAuth((isLoggedIn) => {
+    if (isLoggedIn) api.markLogin();
+  });
+
   // ── Sync detection ────────────────────────────────────────
   const syncManager = new SyncManager(api, workspace, auth);
 

@@ -47,7 +47,10 @@ export class SyncManager {
   ) {
     this.disposables.push(
       workspace.onDidChangeProject(() => this.check()),
-      auth.onDidChangeAuth(() => this.check())
+      auth.onDidChangeAuth(() => {
+        // Delay after login so the API key INSERT has time to commit
+        setTimeout(() => this.check(), 2_000);
+      })
     );
   }
 

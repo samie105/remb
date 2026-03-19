@@ -34,6 +34,7 @@ export class ApiClient {
   readonly onDidReceiveNetworkError = this._onDidReceiveNetworkError.event;
 
   private _authErrorPrompted = false;
+  private _lastLoginAt = 0;
 
   constructor(private getApiKey: () => Promise<string | undefined>) {
     const config = vscode.workspace.getConfiguration("remb");
@@ -43,6 +44,11 @@ export class ApiClient {
   /** Reset the "already prompted" guard so the next 401 will prompt again. */
   resetAuthPrompt() {
     this._authErrorPrompted = false;
+  }
+
+  /** Call after a successful login so the client knows to retry early 401s. */
+  markLogin() {
+    this._lastLoginAt = Date.now();
   }
 
   private async request<T = unknown>(
@@ -106,6 +112,13 @@ export class ApiClient {
     if (!res.ok) {
       const msg = (data as { error?: string })?.error ?? `HTTP ${res.status} ${res.statusText}`;
       if (res.status === 401) {
+        // Grace period: if we just logged in, retry once after a short delay
+        // to avoid race with DB commit of the new API key
+        if (Date.now() - this._lastLoginAt < 10_000) {
+          await new Promise((r) => setTimeout(r, 2_000));
+          const retry = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
+          if (retry.ok) return (await retry.json().catch(() => null)) as T;
+        }
         this._onDidReceiveAuthError.fire();
         this.promptReAuth();
       }
