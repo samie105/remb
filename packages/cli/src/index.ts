@@ -1,6 +1,5 @@
 import { Command } from "commander";
 import chalk from "chalk";
-import { createRequire } from "module";
 import { loginCommand, logoutCommand, whoamiCommand } from "./commands/login.js";
 import { initCommand } from "./commands/init.js";
 import { saveCommand } from "./commands/save.js";
@@ -15,8 +14,7 @@ import { diffCommand } from "./commands/diff.js";
 import { pushCommand } from "./commands/push.js";
 import { historyCommand } from "./commands/history.js";
 
-const require = createRequire(import.meta.url);
-const { version } = require("../package.json") as { version: string };
+declare const __CLI_VERSION__: string;
 
 const program = new Command();
 
@@ -25,7 +23,7 @@ program
   .description(
     "Persistent memory layer for AI coding sessions — save, retrieve, and visualize project context."
   )
-  .version(version, "-v, --version")
+  .version(__CLI_VERSION__, "-v, --version")
   .configureHelp({
     sortSubcommands: true,
     subcommandTerm: (cmd) => chalk.bold(cmd.name()),
