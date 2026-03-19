@@ -7,11 +7,11 @@
   "homepage": "https://useremb.com",
   "repository": {
     "type": "git",
-    "url": "https://github.com/useremb/remb.git",
+    "url": "https://github.com/samie105/remb.git",
     "directory": "packages/cli-npm"
   },
   "bugs": {
-    "url": "https://github.com/useremb/remb/issues"
+    "url": "https://github.com/samie105/remb/issues"
   },
   "publishConfig": {
     "access": "public"

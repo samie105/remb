@@ -4,7 +4,7 @@
 
 set -e
 
-REPO="useremb/remb"
+REPO="samie105/remb"
 BINARY="remb"
 
 # Prefer a user-owned directory so no sudo is required.

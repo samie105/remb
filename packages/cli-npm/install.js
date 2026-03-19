@@ -9,7 +9,7 @@ const fs = require("fs");
 const path = require("path");
 const https = require("https");
 
-const REPO = "useremb/remb";
+const REPO = "samie105/remb";
 const VERSION = require("./package.json").version;
 const BIN_DIR = path.join(__dirname, "bin");
 const BIN_PATH = path.join(BIN_DIR, process.platform === "win32" ? "remb.exe" : "remb");
