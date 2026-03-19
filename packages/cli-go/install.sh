@@ -39,10 +39,10 @@ if [ "$OS" = "windows" ]; then
   EXT=".exe"
 fi
 
-# Get latest version from GitHub releases
+# Get latest version from remb API
 VERSION="${REMB_VERSION:-latest}"
 if [ "$VERSION" = "latest" ]; then
-  VERSION=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | sed -E 's/.*"v?([^"]+)".*/\1/')
+  VERSION=$(curl -fsSL "https://www.useremb.com/api/cli/version" | sed -E 's/.*"version":"?([^",}]+)"?.*/\1/')
 fi
 
 if [ -z "$VERSION" ]; then
