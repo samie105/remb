@@ -460,6 +460,22 @@ export function getBuiltinTools(): AggregatedTool[] {
       _originalName: "context_bundle",
     },
     {
+      name: `${PREFIX}__session_start`,
+      description: "[Remb] Unified session start — returns context bundle, memories, features, recent conversations, and scan status in a single call. Use this at the start of every session instead of calling context_bundle + conversation_history separately.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          project_slug: {
+            type: "string",
+            description: "Project slug",
+          },
+        },
+        required: ["project_slug"],
+      },
+      _serverId: "__builtin__",
+      _originalName: "session_start",
+    },
+    {
       name: `${PREFIX}__scan_trigger`,
       description: "[Remb] Trigger a cloud scan of the project repository to extract features and context. Returns a scan ID for progress tracking.",
       inputSchema: {
@@ -1333,6 +1349,123 @@ export async function callBuiltinTool(
           }
           lines.push("");
         }
+      }
+
+      return { content: [{ type: "text", text: lines.join("\n") }] };
+    }
+
+    case "session_start": {
+      const slug = args.project_slug as string;
+      if (!slug) throw new Error("project_slug is required");
+
+      // Single unified call to session/start API
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL
+        ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
+      const secret = process.env.SCAN_WORKER_SECRET?.trim();
+      if (!secret) throw new Error("Internal configuration error");
+
+      // Fetch from our own session-start endpoint using internal auth
+      const { data: project } = await db
+        .from("projects")
+        .select("id, name, description, repo_name, branch")
+        .eq("user_id", userId)
+        .eq("slug", slug)
+        .single();
+
+      if (!project) throw new Error(`Project "${slug}" not found`);
+
+      // Run all queries in parallel
+      const [scanRes, memRes, featRes, convRes] = await Promise.all([
+        db.from("scan_jobs")
+          .select("result, created_at, finished_at")
+          .eq("project_id", project.id)
+          .eq("status", "done")
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .single(),
+        db.from("memories")
+          .select("id, tier, category, title, content")
+          .eq("user_id", userId)
+          .or(`project_id.eq.${project.id},project_id.is.null`)
+          .in("tier", ["core", "active"])
+          .order("tier")
+          .order("access_count", { ascending: false })
+          .limit(50),
+        db.from("features")
+          .select("id, name, description")
+          .eq("project_id", project.id)
+          .eq("status", "active"),
+        db.from("conversation_entries")
+          .select("content, type, tags, created_at")
+          .eq("user_id", userId)
+          .or(`project_slug.eq.${slug},project_slug.is.null`)
+          .order("created_at", { ascending: false })
+          .limit(10),
+      ]);
+
+      const scanMeta = scanRes.data?.result as Record<string, unknown> | null;
+      const lastScanAt = scanRes.data?.finished_at ?? scanRes.data?.created_at ?? null;
+      const techStack = Array.isArray(scanMeta?.tech_stack) ? scanMeta.tech_stack as string[] : [];
+
+      const memories = memRes.data ?? [];
+      const coreMemories = memories.filter((m) => m.tier === "core");
+      const activeMemories = memories.filter((m) => m.tier === "active");
+
+      // Touch memories
+      const memIds = memories.map((m) => m.id);
+      if (memIds.length > 0) {
+        await db.rpc("touch_memories", { memory_ids: memIds }).catch(() => {});
+      }
+
+      const features = featRes.data ?? [];
+      const conversations = convRes.data ?? [];
+
+      // Build a concise session-start markdown
+      const lines: string[] = [];
+      lines.push(`# ${project.name} — Session Context`);
+      lines.push("");
+      if (techStack.length > 0) lines.push(`**Tech Stack:** ${techStack.join(", ")}`);
+      if (lastScanAt) lines.push(`**Last Scan:** ${lastScanAt}`);
+      lines.push("");
+
+      if (coreMemories.length > 0) {
+        lines.push("## Core Knowledge");
+        lines.push("");
+        for (const m of coreMemories) {
+          lines.push(`### ${m.title}`);
+          lines.push(m.content);
+          lines.push("");
+        }
+      }
+
+      if (activeMemories.length > 0) {
+        lines.push("## Active Memories");
+        lines.push("");
+        for (const m of activeMemories) {
+          lines.push(`- **${m.title}** _(${m.category})_: ${m.content}`);
+        }
+        lines.push("");
+      }
+
+      if (features.length > 0) {
+        lines.push(`## Features (${features.length})`);
+        lines.push("");
+        for (const f of features) {
+          lines.push(`- **${f.name}**: ${f.description ?? "No description"}`);
+        }
+        lines.push("");
+      }
+
+      if (conversations.length > 0) {
+        lines.push("## Recent Activity");
+        lines.push("");
+        for (const c of conversations) {
+          const date = c.created_at.slice(0, 16).replace("T", " ");
+          const tagStr = c.tags?.length > 0 ? ` [${c.tags.join(", ")}]` : "";
+          const truncated = c.content.length > 300 ? c.content.slice(0, 300) + "..." : c.content;
+          lines.push(`- **${date}**${tagStr}: ${truncated}`);
+        }
+        lines.push("");
       }
 
       return { content: [{ type: "text", text: lines.join("\n") }] };

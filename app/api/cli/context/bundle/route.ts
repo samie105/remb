@@ -119,11 +119,31 @@ export async function GET(request: NextRequest) {
     };
   }).sort((a, b) => b.importance - a.importance);
 
+  // Filter out low-importance features to reduce token waste
+  const significantFeatures = featureSummaries.filter((f) => f.importance >= 3);
+
+  // Recent conversations for session continuity
+  const { data: recentConversations } = await db
+    .from("conversation_entries")
+    .select("content, type, tags, created_at")
+    .eq("user_id", user.id)
+    .or(`project_slug.eq.${projectSlug},project_slug.is.null`)
+    .order("created_at", { ascending: false })
+    .limit(10);
+
+  const conversations = (recentConversations ?? []).map((c) => ({
+    content: c.content,
+    type: c.type,
+    tags: c.tags,
+    createdAt: c.created_at,
+  }));
+
   // Build markdown
   const markdown = buildContextMarkdown(
     { name: project.name, description: project.description, techStack, languages },
     memories ?? [],
-    featureSummaries,
+    significantFeatures,
+    conversations,
   );
 
   return NextResponse.json({
@@ -139,7 +159,8 @@ export async function GET(request: NextRequest) {
       title: m.title,
       content: m.content,
     })),
-    features: featureSummaries,
+    features: significantFeatures,
+    conversations,
     markdown,
   });
 }
@@ -165,6 +186,12 @@ function buildContextMarkdown(
     importance: number;
     description: string | null;
     files: string[];
+  }>,
+  conversations?: Array<{
+    content: string;
+    type: string;
+    tags: string[];
+    createdAt: string;
   }>,
 ): string {
   const lines: string[] = [];
@@ -247,6 +274,22 @@ function buildContextMarkdown(
       }
       lines.push("");
     }
+  }
+
+  // Recent conversations for session continuity
+  if (conversations && conversations.length > 0) {
+    lines.push("## Recent Activity");
+    lines.push("");
+    for (const c of conversations) {
+      const date = c.createdAt.slice(0, 16).replace("T", " ");
+      const tagStr = c.tags.length > 0 ? ` [${c.tags.join(", ")}]` : "";
+      // Truncate long conversation content to keep bundle manageable
+      const truncated = c.content.length > 500
+        ? c.content.slice(0, 500) + "..."
+        : c.content;
+      lines.push(`- **${date}**${tagStr}: ${truncated}`);
+    }
+    lines.push("");
   }
 
   return lines.join("\n");

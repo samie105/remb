@@ -162,20 +162,36 @@ export async function runScan(
     }
 
     // 0c. Gather already-scanned file SHAs for smart-scan deduplication
-    const { data: prevEntries } = await db
-      .from("context_entries")
-      .select("metadata")
-      .eq("project_id", projectId)   // scope to this project (was missing before)
-      .eq("entry_type", "scan")
-      .eq("source", "worker");
+    // context_entries doesn't have project_id — join through features
+    const { data: projectFeatures } = await db
+      .from("features")
+      .select("id")
+      .eq("project_id", projectId);
 
-    const prevShaSet = new Set<string>();
-    for (const e of prevEntries ?? []) {
-      const meta = e.metadata as Record<string, unknown> | null;
-      if (meta?.file_sha && typeof meta.file_sha === "string") {
-        prevShaSet.add(meta.file_sha);
+    const projectFeatureIds = (projectFeatures ?? []).map((f) => f.id);
+
+    const prevShaMap = new Map<string, string>(); // file_sha → entry id
+    const prevFilePathMap = new Map<string, string>(); // file_path → entry id
+    if (projectFeatureIds.length > 0) {
+      const { data: prevEntries } = await db
+        .from("context_entries")
+        .select("id, metadata")
+        .in("feature_id", projectFeatureIds)
+        .eq("entry_type", "scan")
+        .eq("source", "worker");
+
+      for (const e of prevEntries ?? []) {
+        const meta = e.metadata as Record<string, unknown> | null;
+        if (meta?.file_sha && typeof meta.file_sha === "string") {
+          prevShaMap.set(meta.file_sha, e.id);
+        }
+        if (meta?.file_path && typeof meta.file_path === "string") {
+          prevFilePathMap.set(meta.file_path, e.id);
+        }
       }
     }
+
+    const prevShaSet = new Set(prevShaMap.keys());
 
     // 1. Fetch repo file tree
     logs.push({
@@ -228,6 +244,24 @@ export async function runScan(
 
     // Build file index for import resolution (ALL repo files, not just queued)
     fileIndex = new Set(files.map((f) => f.path));
+
+    // Remove stale scan entries for files that no longer exist in the repo
+    const currentFilePaths = new Set(files.map((f) => f.path));
+    const staleEntryIds: string[] = [];
+    for (const [filePath, entryId] of prevFilePathMap) {
+      if (!currentFilePaths.has(filePath)) {
+        staleEntryIds.push(entryId);
+      }
+    }
+    if (staleEntryIds.length > 0) {
+      await db.from("context_entries").delete().in("id", staleEntryIds);
+      logs.push({
+        timestamp: new Date().toISOString(),
+        file: "",
+        status: "done",
+        message: `Removed ${staleEntryIds.length} stale entries for deleted files`,
+      });
+    }
 
     // Clear stale file dependencies for this project before rebuilding
     await db.from("file_dependencies").delete().eq("project_id", projectId);

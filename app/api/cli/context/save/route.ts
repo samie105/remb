@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { authenticateCliRequest } from "@/lib/cli-auth";
 import { createAdminClient } from "@/lib/supabase/server";
+import { generateEmbedding } from "@/lib/openai";
 import type { Json } from "@/lib/supabase/types";
 
 export async function POST(request: Request) {
@@ -87,6 +88,12 @@ export async function POST(request: Request) {
   const metadata: Record<string, unknown> = {};
   if (tags?.length) metadata.tags = tags;
 
+  // Generate embedding so manual saves are semantically searchable
+  let embedding: number[] | null = null;
+  try {
+    embedding = await generateEmbedding(content.slice(0, 8000));
+  } catch { /* non-fatal — entry still saved without embedding */ }
+
   const { data: entry, error: entryErr } = await db
     .from("context_entries")
     .insert({
@@ -95,6 +102,7 @@ export async function POST(request: Request) {
       entry_type: entryType ?? "manual",
       source: "cli",
       metadata: metadata as Json,
+      ...(embedding ? { embedding: `[${embedding.join(",")}]` } : {}),
     })
     .select("id, created_at")
     .single();

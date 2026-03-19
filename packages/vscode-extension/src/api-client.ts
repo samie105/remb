@@ -189,6 +189,22 @@ export class ApiClient {
     );
   }
 
+  async sessionStart(projectSlug: string) {
+    return this.request<{
+      project: { name: string; description: string | null; techStack: string[]; languages: Record<string, number> };
+      memories: Array<{ tier: string; category: string; title: string; content: string }>;
+      features: Array<{ name: string; category: string; importance: number; description: string | null; files: string[] }>;
+      conversations: Array<{ content: string; type: string; tags: string[]; createdAt: string }>;
+      lastScanAt: string | null;
+      lastScannedSha: string | null;
+    }>(
+      "GET",
+      "/api/cli/session/start",
+      undefined,
+      { projectSlug }
+    );
+  }
+
   // ── Memory ───────────────────────────────────────────────
 
   async listMemories(params?: {

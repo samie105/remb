@@ -135,6 +135,10 @@ jobs:
         working-directory: packages/vscode-extension
         run: pnpm install --frozen-lockfile
 
+      - name: Build extension
+        working-directory: packages/vscode-extension
+        run: pnpm build
+
       - name: Bump version to match tag
         working-directory: packages/vscode-extension
         run: |
