@@ -4,9 +4,9 @@
       "command": "remb",
       "args": ["serve"]
     },
-    "Remb": {
+     "Remb": {
       "type": "http",
-      "url": "http://localhost:3000/api/mcp"
+      "url": "https://www.useremb.com/api/mcp"
     }
   }
 }

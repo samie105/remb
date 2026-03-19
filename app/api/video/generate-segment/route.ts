@@ -20,7 +20,7 @@ export async function POST(request: NextRequest) {
     secret: string;
   };
 
-  if (secret !== process.env.SCAN_WORKER_SECRET) {
+  if (secret !== process.env.SCAN_WORKER_SECRET?.trim()) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

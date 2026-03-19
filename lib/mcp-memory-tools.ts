@@ -1399,7 +1399,7 @@ export async function callBuiltinTool(
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${process.env.SCAN_WORKER_SECRET}`,
+          Authorization: `Bearer ${process.env.SCAN_WORKER_SECRET?.trim()}`,
         },
         body: JSON.stringify({
           scanJobId: scanJob.id,

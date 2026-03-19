@@ -247,7 +247,7 @@ export async function createScanJob(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${process.env.SCAN_WORKER_SECRET}`,
+      Authorization: `Bearer ${process.env.SCAN_WORKER_SECRET?.trim()}`,
     },
     body: JSON.stringify({
       scanJobId: job.id,

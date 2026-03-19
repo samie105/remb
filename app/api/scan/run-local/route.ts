@@ -15,7 +15,7 @@ export const maxDuration = 300;
  * Body: { scanJobId, projectId, files, batch, totalBatches }
  */
 export async function POST(request: NextRequest) {
-  const secret = process.env.SCAN_WORKER_SECRET;
+  const secret = process.env.SCAN_WORKER_SECRET?.trim();
   if (!secret) {
     return NextResponse.json({ error: "Server misconfiguration" }, { status: 500 });
   }

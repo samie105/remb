@@ -109,7 +109,7 @@ export async function requestVideoPresentation(
 
   // Fire-and-forget: trigger the background worker
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
-  const workerSecret = process.env.SCAN_WORKER_SECRET;
+  const workerSecret = process.env.SCAN_WORKER_SECRET?.trim();
 
   fetch(`${appUrl}/api/video/generate`, {
     method: "POST",

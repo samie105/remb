@@ -582,7 +582,7 @@ function chainNextChunk(
   const appUrl =
     process.env.NEXT_PUBLIC_APP_URL ??
     (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
-  const secret = process.env.SCAN_WORKER_SECRET;
+  const secret = process.env.SCAN_WORKER_SECRET?.trim();
   if (!secret) {
     console.error(`[scan-runner] SCAN_WORKER_SECRET is not set — cannot chain next chunk (offset ${chunkOffset}). Scan will stop here.`);
     return;
@@ -603,7 +603,7 @@ function chainNextChunk(
 function triggerQueueProcessing() {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL
     ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
-  const secret = process.env.SCAN_WORKER_SECRET;
+  const secret = process.env.SCAN_WORKER_SECRET?.trim();
   if (!secret) return;
 
   fetch(`${appUrl}/api/scan/process-queue`, {

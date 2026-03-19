@@ -102,7 +102,7 @@ export async function POST(request: NextRequest) {
     const { presentationId, secret } = body;
 
     // Auth: verify internal secret
-    if (secret !== process.env.SCAN_WORKER_SECRET) {
+    if (secret !== process.env.SCAN_WORKER_SECRET?.trim()) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -189,7 +189,7 @@ export async function POST(request: NextRequest) {
 
     // Fire parallel per-segment workers (each runs in its own 300s serverless call)
     const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
-    const workerSecret = process.env.SCAN_WORKER_SECRET;
+    const workerSecret = process.env.SCAN_WORKER_SECRET?.trim();
 
     for (let i = 0; i < segments.length; i++) {
       const storagePath = `${presentation.user_id}/${project.id}/${presentationId}/segment-${i}.mp4`;

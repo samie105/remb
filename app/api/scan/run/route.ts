@@ -23,14 +23,18 @@ export async function POST(request: NextRequest) {
   // ------------------------------------------------------------------
   // 1. Verify internal secret
   // ------------------------------------------------------------------
-  const secret = process.env.SCAN_WORKER_SECRET;
+  const secret = process.env.SCAN_WORKER_SECRET?.trim();
   if (!secret) {
     console.error("[scan/run] SCAN_WORKER_SECRET env var is not set");
     return NextResponse.json({ error: "Server misconfiguration" }, { status: 500 });
   }
 
   const authHeader = request.headers.get("authorization");
-  if (authHeader !== `Bearer ${secret}`) {
+  const expected = `Bearer ${secret}`;
+  if (authHeader !== expected) {
+    console.error(
+      `[scan/run] 401 — header length=${authHeader?.length ?? 0}, expected length=${expected.length}, match=${authHeader === expected}`
+    );
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

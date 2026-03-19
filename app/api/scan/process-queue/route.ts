@@ -15,7 +15,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 const MAX_CONCURRENT_SCANS = 3;
 
 export async function POST(request: NextRequest) {
-  const secret = process.env.SCAN_WORKER_SECRET;
+  const secret = process.env.SCAN_WORKER_SECRET?.trim();
   if (!secret) {
     return NextResponse.json({ error: "Server misconfiguration" }, { status: 500 });
   }
