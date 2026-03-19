@@ -2,7 +2,7 @@
   "name": "remb",
   "displayName": "Remb",
   "description": "Persistent memory and context for AI coding sessions — makes your AI remember across conversations",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "publisher": "remb",
   "license": "MIT",
   "repository": {

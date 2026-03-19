@@ -1,6 +1,6 @@
 {
   "name": "remb-go",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "Persistent memory layer for AI coding sessions — Go binary installer",
   "keywords": ["ai", "context", "mcp", "cli", "coding-assistant"],
   "license": "MIT",
