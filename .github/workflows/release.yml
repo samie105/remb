@@ -198,7 +198,7 @@ jobs:
 
       - name: Push updated formula to Homebrew tap
         run: |
-          git clone https://x-access-token:${{ secrets.HOMEBREW_TAP_TOKEN }}@github.com/useremb/homebrew-remb.git tap-repo
+          git clone https://x-access-token:${{ secrets.HOMEBREW_TAP_TOKEN }}@github.com/samie105/homebrew-remb.git tap-repo
           mkdir -p tap-repo/Formula
           cp homebrew/remb.rb tap-repo/Formula/remb.rb
           cd tap-repo
