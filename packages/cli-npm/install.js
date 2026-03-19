@@ -82,7 +82,7 @@ async function main() {
       console.warn(`remb: fix with one of:`);
       console.warn(`remb:   curl -fsSL https://useremb.com/install.sh | sh   (recommended — no sudo needed)`);
       console.warn(`remb:   npm config set prefix ~/.npm-global && export PATH=~/.npm-global/bin:$PATH`);
-      console.warn(`remb:   brew tap useremb/remb && brew install remb`);
+      console.warn(`remb:   brew tap samie105/remb && brew install remb`);
     } else {
       console.warn(`remb: could not download binary (${err.message})`);
       console.warn(`remb: install manually: https://github.com/${REPO}/releases/tag/v${VERSION}`);

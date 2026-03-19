@@ -171,10 +171,10 @@ jobs:
         id: sha
         run: |
           VERSION=${GITHUB_REF_NAME#v}
-          ARM64_URL="https://github.com/useremb/remb/releases/download/${GITHUB_REF_NAME}/remb-darwin-arm64"
-          AMD64_URL="https://github.com/useremb/remb/releases/download/${GITHUB_REF_NAME}/remb-darwin-amd64"
-          LINUX_ARM64_URL="https://github.com/useremb/remb/releases/download/${GITHUB_REF_NAME}/remb-linux-arm64"
-          LINUX_AMD64_URL="https://github.com/useremb/remb/releases/download/${GITHUB_REF_NAME}/remb-linux-amd64"
+          ARM64_URL="https://github.com/samie105/remb/releases/download/${GITHUB_REF_NAME}/remb-darwin-arm64"
+          AMD64_URL="https://github.com/samie105/remb/releases/download/${GITHUB_REF_NAME}/remb-darwin-amd64"
+          LINUX_ARM64_URL="https://github.com/samie105/remb/releases/download/${GITHUB_REF_NAME}/remb-linux-arm64"
+          LINUX_AMD64_URL="https://github.com/samie105/remb/releases/download/${GITHUB_REF_NAME}/remb-linux-amd64"
 
           SHA_DARWIN_ARM64=$(curl -fsSL "$ARM64_URL" | sha256sum | cut -d' ' -f1)
           SHA_DARWIN_AMD64=$(curl -fsSL "$AMD64_URL" | sha256sum | cut -d' ' -f1)

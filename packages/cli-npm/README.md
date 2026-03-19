@@ -17,7 +17,7 @@ This runs a postinstall script that downloads the correct binary for your OS and
 | Method | Command |
 |--------|---------|
 | **curl** (recommended) | `curl -fsSL https://useremb.com/install.sh \| sh` |
-| **Homebrew** | `brew tap useremb/remb && brew install remb` |
+| **Homebrew** | `brew tap samie105/remb && brew install remb` |
 | **Go install** | `go install github.com/useremb/remb@latest` |
 
 ## Supported Platforms

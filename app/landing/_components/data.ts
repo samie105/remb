@@ -218,7 +218,7 @@ export const INSTALL_METHODS: InstallMethodItem[] = [
   {
     label: "Homebrew",
     desc: "macOS & Linux",
-    cmd: "brew tap useremb/remb && brew install remb",
+    cmd: "brew tap samie105/remb && brew install remb",
   },
   {
     label: "VS Code",
