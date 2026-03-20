@@ -7,7 +7,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var Version = "0.1.9"
+var Version = "0.1.11"
 
 var rootCmd = &cobra.Command{
 	Use:   "remb",

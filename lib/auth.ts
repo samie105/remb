@@ -13,6 +13,9 @@ export interface AuthSession {
 /**
  * Resolve the current authenticated user from the gh_token cookie.
  * Returns null if not authenticated. Does NOT redirect — the caller decides.
+ *
+ * Persists the GitHub token in the users table so server actions can use it
+ * without relying on the cookie every time.
  */
 export async function getSession(): Promise<AuthSession | null> {
   const cookieStore = await cookies();
@@ -22,7 +25,7 @@ export async function getSession(): Promise<AuthSession | null> {
   try {
     const user = await fetchGitHubUser(token);
 
-    // Ensure user exists in DB
+    // Ensure user exists in DB and backfill github_token
     const db = createAdminClient();
     const { data: dbUser } = await db
       .from("users")
@@ -31,6 +34,7 @@ export async function getSession(): Promise<AuthSession | null> {
           github_login: user.login,
           github_avatar: user.avatar_url,
           name: user.name,
+          github_token: token,
         },
         { onConflict: "github_login", ignoreDuplicates: false }
       )

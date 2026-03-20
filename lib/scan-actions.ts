@@ -1,6 +1,5 @@
 "use server";
 
-import { cookies } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/server";
 import { getSession } from "@/lib/auth";
 import { getLatestCommitSha } from "@/lib/github-reader";
@@ -57,18 +56,14 @@ export async function checkForChanges(projectId: string): Promise<{ hasChanges: 
 
   if (!project?.repo_name) return { hasChanges: true, currentSha: null, lastScannedSha: null };
 
-  // Get GitHub token
+  // Get GitHub token — backfilled by getSession()
   const { data: user } = await db
     .from("users")
     .select("github_token")
     .eq("id", session.dbUser.id)
     .single();
 
-  let githubToken = user?.github_token ?? null;
-  if (!githubToken) {
-    const cookieStore = await cookies();
-    githubToken = cookieStore.get("gh_token")?.value ?? null;
-  }
+  const githubToken = user?.github_token ?? null;
   if (!githubToken) return { hasChanges: true, currentSha: null, lastScannedSha: null };
 
   // Fetch current HEAD SHA
@@ -168,31 +163,17 @@ export async function createScanJob(
     throw new Error("Project has no connected repository");
   }
 
-  // Get GitHub token from DB, with cookie fallback/backfill.
+  // Get GitHub token — should always be in DB since getSession backfills it.
   const { data: user } = await db
     .from("users")
     .select("github_token")
     .eq("id", session.dbUser.id)
     .single();
 
-  let githubToken = user?.github_token ?? null;
+  const githubToken = user?.github_token ?? null;
 
   if (!githubToken) {
-    const cookieStore = await cookies();
-    const cookieToken = cookieStore.get("gh_token")?.value ?? null;
-
-    if (cookieToken) {
-      githubToken = cookieToken;
-      // Best effort backfill so future scans don't depend on cookie fallback.
-      await db
-        .from("users")
-        .update({ github_token: cookieToken })
-        .eq("id", session.dbUser.id);
-    }
-  }
-
-  if (!githubToken) {
-    throw new Error("GitHub token not found. Reconnect GitHub from the auth page.");
+    throw new Error("GitHub token expired. Please sign out and sign back in.");
   }
 
   // Set project status to scanning

@@ -1951,14 +1951,136 @@ function extToLanguage(ext) {
 }
 
 // src/commands/scan.ts
-var scanCommand = new Command5("scan").description("Auto-scan a directory to generate context entries").option("-p, --project <slug>", "Project slug (reads from .remb.yml if omitted)").option("--path <directory>", "Directory path to scan", ".").option("-d, --depth <n>", "Max recursion depth", "5").option("--ignore <patterns>", "Comma-separated glob patterns to ignore", "").option("--dry-run", "Preview what would be scanned without saving", false).addHelpText(
+var scanCommand = new Command5("scan").description("Scan your project to extract features and context").option("-p, --project <slug>", "Project slug (reads from .remb.yml if omitted)").option("--local", "Scan local files instead of GitHub repository", false).option("--path <directory>", "Directory path for local scan", ".").option("-d, --depth <n>", "Max recursion depth for local scan", "5").option("--ignore <patterns>", "Comma-separated glob patterns to ignore", "").option("--dry-run", "Preview what would be scanned without saving", false).option("--no-poll", "Trigger scan without waiting for completion", false).addHelpText(
   "after",
   `
 Examples:
-  $ remb scan
-  $ remb scan --path src --depth 3
-  $ remb scan --ignore "tests/**,docs/**" --dry-run`
+  $ remb scan                        # Smart scan via GitHub (recommended)
+  $ remb scan --local                # Scan local files
+  $ remb scan --local --path src     # Scan specific directory
+  $ remb scan --no-poll              # Start scan and exit immediately
+  $ remb scan --local --dry-run      # Preview without saving`
 ).action(async (opts) => {
+  if (opts.local) {
+    await runLocalScan(opts);
+  } else {
+    await runServerScan(opts);
+  }
+});
+async function runServerScan(opts) {
+  const projectSlug = resolveProject(opts.project);
+  const client = createApiClient();
+  const spinner = ora3(`Checking ${chalk7.bold(projectSlug)} for changes...`).start();
+  try {
+    const result = await client.triggerScan(projectSlug);
+    if (result.status === "up_to_date") {
+      spinner.succeed(chalk7.green("Already up to date \u2014 no new commits since last scan."));
+      return;
+    }
+    if (result.status === "already_running") {
+      spinner.info("A scan is already running for this project.");
+      if (result.scanId && opts.poll) {
+        await pollScan(client, result.scanId);
+      }
+      return;
+    }
+    if (!result.scanId) {
+      spinner.fail("Failed to start scan \u2014 no scan ID returned.");
+      return;
+    }
+    spinner.succeed(`Scan started for ${chalk7.bold(projectSlug)}`);
+    if (!opts.poll) {
+      info(`Scan ID: ${chalk7.dim(result.scanId)}`);
+      info(`Run ${chalk7.bold(`remb scan -p ${projectSlug}`)} to check progress.`);
+      return;
+    }
+    await pollScan(client, result.scanId);
+  } catch (err) {
+    spinner.stop();
+    handleError(err);
+  }
+}
+async function pollScan(client, scanId) {
+  console.log();
+  const spinner = ora3("Initializing...").start();
+  const seenFiles = /* @__PURE__ */ new Set();
+  let lastFeature = "";
+  while (true) {
+    try {
+      const status = await client.getScanStatus(scanId);
+      if (status.status === "done") {
+        spinner.stop();
+        printScanSummary(status);
+        return;
+      }
+      if (status.status === "failed") {
+        spinner.fail(chalk7.red("Scan failed."));
+        const logs = status.logs ?? [];
+        const errorLogs = logs.filter((l) => l.status === "error");
+        if (errorLogs.length > 0) {
+          for (const log of errorLogs.slice(-3)) {
+            console.log(`  ${chalk7.red("\u2717")} ${log.file} \u2014 ${log.message ?? "unknown error"}`);
+          }
+        }
+        process.exit(1);
+      }
+      const pct = status.percentage ?? 0;
+      const bar = renderProgressBar(pct, 24);
+      const fileInfo = status.filesScanned != null && status.filesTotal ? `${status.filesScanned}/${status.filesTotal} files` : "";
+      const newLogs = (status.logs ?? []).filter(
+        (l) => l.status === "done" && l.file && !seenFiles.has(l.file)
+      );
+      for (const log of newLogs) {
+        seenFiles.add(log.file);
+        if (log.feature) lastFeature = log.feature;
+      }
+      const featureStr = lastFeature ? ` ${chalk7.dim("\u2192")} ${chalk7.cyan(lastFeature)}` : "";
+      spinner.text = `${bar} ${fileInfo}${featureStr}`;
+    } catch {
+    }
+    await sleep2(3e3);
+  }
+}
+function renderProgressBar(pct, width) {
+  const filled = Math.round(pct / 100 * width);
+  const empty = width - filled;
+  return `${chalk7.green("\u2588".repeat(filled))}${chalk7.dim("\u2591".repeat(empty))} ${chalk7.bold(`${pct}%`)}`;
+}
+function printScanSummary(status) {
+  console.log();
+  success("Scan complete!");
+  console.log();
+  keyValue("  Files scanned", `${status.filesScanned}/${status.filesTotal}`);
+  keyValue("  Features found", String(status.featuresCreated));
+  if (status.errors > 0) {
+    keyValue("  Errors", chalk7.yellow(String(status.errors)));
+  }
+  keyValue("  Duration", formatDuration(status.durationMs));
+  const features = /* @__PURE__ */ new Set();
+  for (const log of status.logs ?? []) {
+    if (log.feature && log.status === "done") features.add(log.feature);
+  }
+  if (features.size > 0) {
+    console.log();
+    info("Features discovered:");
+    for (const f of features) {
+      console.log(`  ${chalk7.cyan("\u25CF")} ${f}`);
+    }
+  }
+  console.log();
+}
+function formatDuration(ms) {
+  if (ms < 1e3) return `${ms}ms`;
+  const seconds = Math.round(ms / 1e3);
+  if (seconds < 60) return `${seconds}s`;
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`;
+}
+function sleep2(ms) {
+  return new Promise((resolve6) => setTimeout(resolve6, ms));
+}
+async function runLocalScan(opts) {
   const projectSlug = resolveProject(opts.project);
   const depth = parseInt(opts.depth, 10) || 5;
   const ignore = opts.ignore ? opts.ignore.split(",").map((p) => p.trim()).filter(Boolean) : [];
@@ -1976,7 +2098,7 @@ Examples:
     }
     if (files.length > 500) {
       warn(
-        `Found ${chalk7.bold(files.length)} files \u2014 this is a large scan. Consider using ${chalk7.bold("--ignore")} to exclude test or vendor directories.`
+        `Found ${chalk7.bold(files.length)} files \u2014 consider using ${chalk7.bold("--ignore")} to exclude test directories.`
       );
     }
     console.log();
@@ -2011,7 +2133,7 @@ Examples:
     spinner.stop();
     handleError(err);
   }
-});
+}
 
 // src/commands/link.ts
 import { Command as Command6 } from "commander";
@@ -2074,7 +2196,7 @@ var serveCommand = new Command7("serve").description("Start the MCP server for A
   }
   const server = new McpServer({
     name: "remb",
-    version: "0.1.5"
+    version: "0.1.10"
   });
   server.tool(
     "save_context",
@@ -3088,7 +3210,7 @@ async function pollScanProgress(client, scanId) {
       warn("Scan appears to have timed out. Check the dashboard for status.");
       break;
     }
-    await sleep2(2e3);
+    await sleep3(2e3);
     let status;
     try {
       status = await client.getScanStatus(scanId);
@@ -3122,7 +3244,7 @@ async function pollScanProgress(client, scanId) {
     spinner.stop();
     console.log();
     if (status.status === "done") {
-      const dur = status.durationMs > 0 ? formatDuration(status.durationMs) : "";
+      const dur = status.durationMs > 0 ? formatDuration2(status.durationMs) : "";
       success(
         `Scan complete \u2014 ${chalk14.bold(status.featuresCreated)} features from ${chalk14.bold(status.filesScanned)} files` + (dur ? ` ${chalk14.dim(`in ${dur}`)}` : "")
       );
@@ -3144,14 +3266,14 @@ function truncatePath(p, maxLen) {
   if (p.length <= maxLen) return p;
   return "\u2026" + p.slice(-(maxLen - 1));
 }
-function formatDuration(ms) {
+function formatDuration2(ms) {
   const secs = Math.round(ms / 1e3);
   if (secs < 60) return `${secs}s`;
   const mins = Math.floor(secs / 60);
   const rem = secs % 60;
   return `${mins}m ${rem}s`;
 }
-function sleep2(ms) {
+function sleep3(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 function checkGitStatus() {
@@ -3366,7 +3488,7 @@ function printMarkdown(entries) {
 var program = new Command14();
 program.name("remb").description(
   "Persistent memory layer for AI coding sessions \u2014 save, retrieve, and visualize project context."
-).version("0.1.5", "-v, --version").configureHelp({
+).version("0.1.10", "-v, --version").configureHelp({
   sortSubcommands: true,
   subcommandTerm: (cmd) => chalk16.bold(cmd.name())
 });
