@@ -69,6 +69,8 @@ export class ContextMirror implements vscode.Disposable {
   private isSyncing = false;
   /** Cached dependency data from last full sync */
   private fileDeps: Record<string, { imports: string[]; importedBy: string[] }> = {};
+  /** Cached conversation data from last full sync */
+  private fileConversations: Record<string, Array<{ summary: string; timestamp: string; relatedFiles: string[] }>> = {};
 
   constructor(
     private api: ApiClient,
@@ -127,6 +129,7 @@ export class ContextMirror implements vscode.Disposable {
 
       // Cache dependency data for incremental syncs
       this.fileDeps = resp.dependencies ?? {};
+      this.fileConversations = resp.conversations ?? {};
 
       const rembDir = vscode.Uri.joinPath(root, ".remb");
 
@@ -145,7 +148,7 @@ export class ContextMirror implements vscode.Disposable {
         if (!shouldMirror(filePath) || entries.length === 0) continue;
         const mirrorRel = toMirrorPath(filePath);
         expectedPaths.add(mirrorRel);
-        await this.writeMirrorFile(root, filePath, entries, this.fileDeps[filePath]);
+        await this.writeMirrorFile(root, filePath, entries, this.fileDeps[filePath], this.fileConversations[filePath]);
       }
 
       // Clean up stale .remb/ files not in the expected set
@@ -183,11 +186,12 @@ export class ContextMirror implements vscode.Disposable {
 
       // Update cached deps
       if (resp.dependencies) this.fileDeps = resp.dependencies;
+      if (resp.conversations) this.fileConversations = resp.conversations;
 
       for (const filePath of filesToSync) {
         const entries = resp.files[filePath];
         if (!entries || entries.length === 0) continue;
-        await this.writeMirrorFile(root, filePath, entries, this.fileDeps[filePath]);
+        await this.writeMirrorFile(root, filePath, entries, this.fileDeps[filePath], this.fileConversations[filePath]);
       }
     } catch {
       // Non-fatal — re-add files as dirty for next attempt
@@ -212,6 +216,7 @@ export class ContextMirror implements vscode.Disposable {
       updatedAt: string;
     }>,
     deps?: { imports: string[]; importedBy: string[] },
+    conversations?: Array<{ summary: string; timestamp: string; relatedFiles: string[] }>,
   ): Promise<void> {
     const mirrorRel = toMirrorPath(filePath);
 
@@ -253,7 +258,7 @@ export class ContextMirror implements vscode.Disposable {
       sections.push(section);
     }
 
-    const fullContent = header + sections.join("");
+    const fullContent = header + sections.join("") + this.buildConversationsSection(conversations);
     const contentBytes = Buffer.byteLength(fullContent, "utf-8");
 
     if (contentBytes <= MAX_FILE_BYTES) {
@@ -285,6 +290,32 @@ export class ContextMirror implements vscode.Disposable {
         );
       }
     }
+  }
+
+  /** Build a markdown section for recent conversations that affected this file. */
+  private buildConversationsSection(
+    conversations?: Array<{ summary: string; timestamp: string; relatedFiles: string[] }>,
+  ): string {
+    if (!conversations || conversations.length === 0) return "";
+
+    const lines = [
+      "## Recent Changes & Conversations",
+      "",
+    ];
+
+    // Show up to 5 most recent conversations
+    for (const conv of conversations.slice(0, 5)) {
+      const date = conv.timestamp.slice(0, 10);
+      const time = conv.timestamp.slice(11, 16);
+      lines.push(`### ${date} ${time}`);
+      lines.push(`> ${conv.summary.slice(0, 300)}`);
+      if (conv.relatedFiles.length > 0) {
+        lines.push(`**Related files:** ${conv.relatedFiles.slice(0, 8).join(", ")}${conv.relatedFiles.length > 8 ? ` (+${conv.relatedFiles.length - 8} more)` : ""}`);
+      }
+      lines.push("");
+    }
+
+    return lines.join("\n");
   }
 
   /** Write the .remb/index.md file with a project structure overview. */

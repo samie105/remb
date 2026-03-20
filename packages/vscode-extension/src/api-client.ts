@@ -452,6 +452,11 @@ export class ApiClient {
         updatedAt: string;
       }>>;
       dependencies: Record<string, { imports: string[]; importedBy: string[] }>;
+      conversations?: Record<string, Array<{
+        summary: string;
+        timestamp: string;
+        relatedFiles: string[];
+      }>>;
     }>("GET", "/api/cli/context/files", undefined, { projectSlug });
   }
 }

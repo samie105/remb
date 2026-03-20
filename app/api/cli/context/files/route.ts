@@ -102,5 +102,51 @@ export async function GET(request: NextRequest) {
     fileDeps[d.target_path].importedBy.push(d.source_path);
   }
 
-  return NextResponse.json({ files: fileContextMap, dependencies: fileDeps });
-}
+  // Fetch recent conversations for this project to associate with files
+  const knownPaths = new Set(Object.keys(fileContextMap));
+  const fileConversations: Record<string, Array<{
+    summary: string;
+    timestamp: string;
+    relatedFiles: string[];
+  }>> = {};
+
+  const { data: conversations } = await db
+    .from("conversation_entries")
+    .select("content, metadata, created_at")
+    .eq("user_id", user.id)
+    .eq("project_slug", projectSlug)
+    .order("created_at", { ascending: false })
+    .limit(100);
+
+  if (conversations?.length) {
+    for (const conv of conversations) {
+      const meta = conv.metadata as Record<string, unknown> | null;
+      const filesChanged = (meta?.files_changed as string[] | undefined) ?? [];
+
+      // Files from metadata, falling back to text matching against known paths
+      const matchedFiles = new Set<string>();
+      for (const fp of filesChanged) {
+        if (knownPaths.has(fp)) matchedFiles.add(fp);
+      }
+      // Text-match fallback for entries without files_changed metadata
+      if (matchedFiles.size === 0 && conv.content) {
+        for (const fp of knownPaths) {
+          if (conv.content.includes(fp)) matchedFiles.add(fp);
+        }
+      }
+
+      if (matchedFiles.size === 0) continue;
+
+      const allRelated = [...matchedFiles];
+      for (const fp of matchedFiles) {
+        if (!fileConversations[fp]) fileConversations[fp] = [];
+        fileConversations[fp].push({
+          summary: conv.content.slice(0, 500),
+          timestamp: conv.created_at,
+          relatedFiles: allRelated.filter((f) => f !== fp),
+        });
+      }
+    }
+  }
+
+  return NextResponse.json({ files: fileContextMap, dependencies: fileDeps, conversations: fileConversations });

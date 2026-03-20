@@ -148,6 +148,21 @@ export async function logSmartConversation(input: LogSmartConversationInput) {
     input.projectSlug ?? undefined,
   );
 
+  // Extract file paths from file_save events for cross-referencing
+  const filesChanged = [
+    ...new Set(
+      input.events
+        .filter((e) => e.type === "file_save" && e.path)
+        .map((e) => e.path!),
+    ),
+  ];
+
+  // Merge files_changed into metadata
+  const metadata = {
+    ...(input.metadata ?? {}),
+    ...(filesChanged.length > 0 ? { files_changed: filesChanged } : {}),
+  };
+
   // Step 2: Dedup check
   if (input.projectSlug) {
     const dup = await findDuplicateConversation(
@@ -177,7 +192,7 @@ export async function logSmartConversation(input: LogSmartConversationInput) {
           content: mergedTrimmed,
           tags: [...new Set([...(tags ?? []), ...(dup.content.match(/tags/) ? [] : tags)])],
           embedding: `[${mergedEmbedding.join(",")}]`,
-          metadata: (input.metadata ?? {}) as Json,
+          metadata: metadata as Json,
           is_summarized: true,
         })
         .eq("id", dup.id)
@@ -201,7 +216,7 @@ export async function logSmartConversation(input: LogSmartConversationInput) {
       type: "conversation" as const,
       content: summary,
       tags,
-      metadata: (input.metadata ?? {}) as Json,
+      metadata: metadata as Json,
       source: input.source ?? "mcp",
       embedding: `[${embedding.join(",")}]`,
       is_summarized: true,
