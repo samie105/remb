@@ -10,6 +10,7 @@ import {
   CheckmarkCircle02Icon,
   Delete02Icon,
   MoreHorizontalIcon,
+  ArrowLeft01Icon,
 } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -42,6 +43,7 @@ export function PlanMain({ project, initialPlans }: PlanMainProps) {
     initialPlans.find((p) => p.status === "active")?.id ?? null,
   );
   const [isCreating, setIsCreating] = React.useState(false);
+  const [showPlanList, setShowPlanList] = React.useState(!initialPlans.find((p) => p.status === "active"));
 
   const activePlan = plans.find((p) => p.id === activePlanId);
 
@@ -55,6 +57,7 @@ export function PlanMain({ project, initialPlans }: PlanMainProps) {
       setPlans((prev) => [plan, ...prev]);
       setActivePlanId(plan.id);
       setIsCreating(false);
+      setShowPlanList(false);
       toast.success("Plan created");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to create plan");
@@ -67,6 +70,7 @@ export function PlanMain({ project, initialPlans }: PlanMainProps) {
       setPlans((prev) => prev.map((p) => (p.id === planId ? updated : p)));
       if (status !== "active" && activePlanId === planId) {
         setActivePlanId(null);
+        setShowPlanList(true);
       }
       toast.success(`Plan ${status === "completed" ? "completed" : "archived"}`);
     } catch (err) {
@@ -78,11 +82,19 @@ export function PlanMain({ project, initialPlans }: PlanMainProps) {
     try {
       await deletePlan(planId);
       setPlans((prev) => prev.filter((p) => p.id !== planId));
-      if (activePlanId === planId) setActivePlanId(null);
+      if (activePlanId === planId) {
+        setActivePlanId(null);
+        setShowPlanList(true);
+      }
       toast.success("Plan deleted");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to delete plan");
     }
+  }
+
+  function selectPlan(planId: string) {
+    setActivePlanId(planId);
+    setShowPlanList(false);
   }
 
   const statusColors: Record<string, string> = {
@@ -91,127 +103,172 @@ export function PlanMain({ project, initialPlans }: PlanMainProps) {
     archived: "bg-zinc-500/10 text-zinc-500",
   };
 
+  // Full-bleed: negate all parent padding
   return (
-    <div className="-m-4 sm:-m-6 flex h-[calc(100vh-3.5rem)]">
-      {/* Sidebar — Plan list */}
-      <div className="flex w-72 shrink-0 flex-col border-r border-border bg-sidebar/50">
-        <div className="flex items-center justify-between border-b border-border px-4 py-3">
-          <h2 className="text-sm font-semibold">Plans</h2>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => setIsCreating(true)}
+    <div className="-m-4 sm:-m-6 flex h-[calc(100vh-3.5rem)] overflow-hidden">
+      <AnimatePresence mode="wait">
+        {showPlanList || !activePlan ? (
+          /* ─── Plan List (full page) ─── */
+          <motion.div
+            key="plan-list"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="flex flex-1 flex-col"
           >
-            <HugeiconsIcon icon={PlusSignIcon} className="size-4" />
-          </Button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-2">
-          <AnimatePresence mode="popLayout">
-            {plans.map((plan) => (
-              <motion.button
-                key={plan.id}
-                initial={{ opacity: 0, y: -8 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -8 }}
-                onClick={() => setActivePlanId(plan.id)}
-                className={cn(
-                  "group flex w-full items-start gap-2 rounded-lg p-3 text-left transition-colors",
-                  activePlanId === plan.id
-                    ? "bg-accent text-accent-foreground"
-                    : "hover:bg-muted/50",
-                )}
-              >
-                <div className="flex-1 min-w-0">
-                  <p className="truncate text-sm font-medium">{plan.title}</p>
-                  {plan.description && (
-                    <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                      {plan.description}
-                    </p>
-                  )}
-                  <Badge
-                    variant="secondary"
-                    className={cn("mt-1.5 text-[10px]", statusColors[plan.status])}
-                  >
-                    {plan.status}
-                  </Badge>
-                </div>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      className="opacity-0 group-hover:opacity-100 shrink-0"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <HugeiconsIcon icon={MoreHorizontalIcon} className="size-3.5" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    {plan.status === "active" && (
-                      <DropdownMenuItem onClick={() => handleStatusChange(plan.id, "completed")}>
-                        <HugeiconsIcon icon={CheckmarkCircle02Icon} className="mr-2 size-4" />
-                        Complete
-                      </DropdownMenuItem>
-                    )}
-                    {plan.status !== "archived" && (
-                      <DropdownMenuItem onClick={() => handleStatusChange(plan.id, "archived")}>
-                        <HugeiconsIcon icon={Archive01Icon} className="mr-2 size-4" />
-                        Archive
-                      </DropdownMenuItem>
-                    )}
-                    <DropdownMenuItem
-                      onClick={() => handleDeletePlan(plan.id)}
-                      className="text-destructive"
-                    >
-                      <HugeiconsIcon icon={Delete02Icon} className="mr-2 size-4" />
-                      Delete
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </motion.button>
-            ))}
-          </AnimatePresence>
-
-          {plans.length === 0 && (
-            <div className="flex flex-col items-center justify-center py-12 text-center">
-              <p className="text-sm text-muted-foreground">No plans yet</p>
-              <Button
-                variant="outline"
-                size="sm"
-                className="mt-3"
-                onClick={() => setIsCreating(true)}
-              >
-                <HugeiconsIcon icon={PlusSignIcon} className="mr-1.5 size-3.5" />
-                Create your first plan
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-border px-6 py-4">
+              <div>
+                <h1 className="text-lg font-semibold">Plans</h1>
+                <p className="text-sm text-muted-foreground">
+                  Plan your architecture with AI — {project.name}
+                </p>
+              </div>
+              <Button onClick={() => setIsCreating(true)}>
+                <HugeiconsIcon icon={PlusSignIcon} className="mr-1.5 size-4" />
+                New Plan
               </Button>
             </div>
-          )}
-        </div>
-      </div>
 
-      {/* Main content — Chat */}
-      <div className="flex flex-1 flex-col min-w-0">
-        {activePlan ? (
-          <PlanChat plan={activePlan} projectSlug={project.slug} />
+            {/* Plan grid */}
+            <div className="flex-1 overflow-y-auto p-6">
+              {plans.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-24 text-center">
+                  <div className="rounded-2xl bg-muted/50 p-6">
+                    <HugeiconsIcon icon={ArrowRight01Icon} className="size-10 text-muted-foreground" />
+                  </div>
+                  <h3 className="mt-4 text-lg font-semibold">No plans yet</h3>
+                  <p className="mt-1 max-w-md text-sm text-muted-foreground">
+                    Create a plan to start discussing architecture and implementation with AI.
+                  </p>
+                  <Button className="mt-4" onClick={() => setIsCreating(true)}>
+                    <HugeiconsIcon icon={PlusSignIcon} className="mr-1.5 size-4" />
+                    Create your first plan
+                  </Button>
+                </div>
+              ) : (
+                <div className="mx-auto grid max-w-4xl gap-3">
+                  {plans.map((plan) => (
+                    <motion.button
+                      key={plan.id}
+                      initial={{ opacity: 0, y: -4 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      onClick={() => selectPlan(plan.id)}
+                      className="group flex items-center gap-4 rounded-xl border border-border bg-card p-4 text-left transition-colors hover:bg-accent"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="truncate font-medium">{plan.title}</p>
+                          <Badge
+                            variant="secondary"
+                            className={cn("text-[10px] shrink-0", statusColors[plan.status])}
+                          >
+                            {plan.status}
+                          </Badge>
+                        </div>
+                        {plan.description && (
+                          <p className="mt-1 truncate text-sm text-muted-foreground">
+                            {plan.description}
+                          </p>
+                        )}
+                        <p className="mt-1 text-xs text-muted-foreground/60">
+                          Updated {new Date(plan.updated_at).toLocaleDateString()}
+                        </p>
+                      </div>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            className="opacity-0 group-hover:opacity-100 shrink-0"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <HugeiconsIcon icon={MoreHorizontalIcon} className="size-3.5" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          {plan.status === "active" && (
+                            <DropdownMenuItem onClick={() => handleStatusChange(plan.id, "completed")}>
+                              <HugeiconsIcon icon={CheckmarkCircle02Icon} className="mr-2 size-4" />
+                              Complete
+                            </DropdownMenuItem>
+                          )}
+                          {plan.status !== "archived" && (
+                            <DropdownMenuItem onClick={() => handleStatusChange(plan.id, "archived")}>
+                              <HugeiconsIcon icon={Archive01Icon} className="mr-2 size-4" />
+                              Archive
+                            </DropdownMenuItem>
+                          )}
+                          <DropdownMenuItem
+                            onClick={(e) => { e.stopPropagation(); handleDeletePlan(plan.id); }}
+                            className="text-destructive"
+                          >
+                            <HugeiconsIcon icon={Delete02Icon} className="mr-2 size-4" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </motion.button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </motion.div>
         ) : (
-          <div className="flex flex-1 flex-col items-center justify-center gap-4 text-center">
-            <div className="rounded-2xl bg-muted/50 p-6">
-              <HugeiconsIcon icon={ArrowRight01Icon} className="size-10 text-muted-foreground" />
+          /* ─── Active Chat (full page) ─── */
+          <motion.div
+            key="plan-chat"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="flex flex-1 flex-col"
+          >
+            {/* Minimal header bar */}
+            <div className="flex items-center gap-3 border-b border-border px-4 py-2">
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => setShowPlanList(true)}
+              >
+                <HugeiconsIcon icon={ArrowLeft01Icon} className="size-4" />
+              </Button>
+              <div className="flex-1 min-w-0">
+                <p className="truncate text-sm font-medium">{activePlan.title}</p>
+              </div>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon-sm">
+                    <HugeiconsIcon icon={MoreHorizontalIcon} className="size-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {activePlan.status === "active" && (
+                    <DropdownMenuItem onClick={() => handleStatusChange(activePlan.id, "completed")}>
+                      <HugeiconsIcon icon={CheckmarkCircle02Icon} className="mr-2 size-4" />
+                      Complete Plan
+                    </DropdownMenuItem>
+                  )}
+                  {activePlan.status !== "archived" && (
+                    <DropdownMenuItem onClick={() => handleStatusChange(activePlan.id, "archived")}>
+                      <HugeiconsIcon icon={Archive01Icon} className="mr-2 size-4" />
+                      Archive Plan
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuItem
+                    onClick={() => handleDeletePlan(activePlan.id)}
+                    className="text-destructive"
+                  >
+                    <HugeiconsIcon icon={Delete02Icon} className="mr-2 size-4" />
+                    Delete Plan
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
-            <div>
-              <h3 className="text-lg font-semibold">Select or create a plan</h3>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Plan your project architecture with AI assistance
-              </p>
-            </div>
-            <Button onClick={() => setIsCreating(true)}>
-              <HugeiconsIcon icon={PlusSignIcon} className="mr-1.5 size-4" />
-              New Plan
-            </Button>
-          </div>
+
+            <PlanChat plan={activePlan} projectSlug={project.slug} />
+          </motion.div>
         )}
-      </div>
+      </AnimatePresence>
 
       <NewPlanDialog
         open={isCreating}

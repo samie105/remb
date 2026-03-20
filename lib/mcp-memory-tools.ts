@@ -19,7 +19,7 @@ const PREFIX = "remb";
  * Bump this whenever builtin tools are added, removed, or changed.
  * This ensures connected MCP clients get a `notifications/tools/list_changed`.
  */
-export const BUILTIN_TOOLS_VERSION = 5;
+export const BUILTIN_TOOLS_VERSION = 6;
 
 /* ─── tool definitions ─── */
 
@@ -616,6 +616,46 @@ export function getBuiltinTools(): AggregatedTool[] {
       },
       _serverId: "__builtin__",
       _originalName: "plan_phases",
+    },
+    {
+      name: `${PREFIX}__plan_create_phase`,
+      description: "[Remb] Create a new phase in a plan. Use this from the IDE to add new phases/milestones when you identify work to do.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          plan_id: {
+            type: "string",
+            description: "Plan ID to add the phase to",
+          },
+          title: {
+            type: "string",
+            description: "Short title for the phase",
+          },
+          description: {
+            type: "string",
+            description: "Detailed description of what this phase involves",
+          },
+        },
+        required: ["plan_id", "title"],
+      },
+      _serverId: "__builtin__",
+      _originalName: "plan_create_phase",
+    },
+    {
+      name: `${PREFIX}__plan_complete`,
+      description: "[Remb] Mark a plan as completed. Call this when all phases are done or the user confirms the plan is finished.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          plan_id: {
+            type: "string",
+            description: "Plan ID to complete",
+          },
+        },
+        required: ["plan_id"],
+      },
+      _serverId: "__builtin__",
+      _originalName: "plan_complete",
     },
     // ─── Cross-project tools ───
     {
@@ -2078,6 +2118,58 @@ export async function callBuiltinTool(
       return {
         content: [{ type: "text", text: markdown || "No active plans for this project." }],
       };
+    }
+
+    case "plan_create_phase": {
+      const planId = args.plan_id as string;
+      const title = args.title as string;
+      const description = (args.description as string) ?? null;
+      if (!planId || !title) throw new Error("plan_id and title are required");
+
+      // Verify ownership
+      const { data: ownerPlan } = await db
+        .from("plans")
+        .select("id")
+        .eq("id", planId)
+        .eq("user_id", userId)
+        .single();
+      if (!ownerPlan) throw new Error("Plan not found");
+
+      // Get next sort order
+      const { data: lastPhase } = await db
+        .from("plan_phases")
+        .select("sort_order")
+        .eq("plan_id", planId)
+        .order("sort_order", { ascending: false })
+        .limit(1)
+        .single();
+
+      const sortOrder = (lastPhase?.sort_order ?? -1) + 1;
+
+      const { data: newPhase, error: phaseErr } = await db
+        .from("plan_phases")
+        .insert({ plan_id: planId, title, description, sort_order: sortOrder })
+        .select("id, title, description, status, sort_order")
+        .single();
+
+      if (phaseErr) throw new Error(phaseErr.message);
+      return { content: [{ type: "text", text: JSON.stringify({ created: newPhase }, null, 2) }] };
+    }
+
+    case "plan_complete": {
+      const planId = args.plan_id as string;
+      if (!planId) throw new Error("plan_id is required");
+
+      const { data: completedPlan, error: completeErr } = await db
+        .from("plans")
+        .update({ status: "completed" })
+        .eq("id", planId)
+        .eq("user_id", userId)
+        .select("id, title, status")
+        .single();
+
+      if (completeErr) throw new Error(completeErr.message);
+      return { content: [{ type: "text", text: JSON.stringify({ completed: completedPlan }, null, 2) }] };
     }
 
     default:

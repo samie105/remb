@@ -50,6 +50,7 @@ export const contextCommand = new Command("context")
         const { plans } = await client.getPlans(projectSlug);
         if (plans.length > 0) {
           let planMd = "# Active Plans\n\n";
+          planMd += "> Use `remb__plan_update_phase` to mark phases completed, `remb__plan_create_phase` to add new phases, and `remb__plan_complete` to finish a plan.\n\n";
           for (const plan of plans) {
             planMd += `## ${plan.title}\n`;
             if (plan.description) planMd += `${plan.description}\n`;
@@ -59,7 +60,7 @@ export const contextCommand = new Command("context")
               for (const phase of plan.phases) {
                 const icon = phase.status === "completed" ? "✅" : phase.status === "in_progress" ? "🔄" : "⬜";
                 const desc = phase.description ? ` — ${phase.description}` : "";
-                planMd += `${icon} **${phase.title}**${desc}\n`;
+                planMd += `- ${icon} **${phase.title}** (id: \`${phase.id}\`)${desc}\n`;
               }
               planMd += "\n";
             }

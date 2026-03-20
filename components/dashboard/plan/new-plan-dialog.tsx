@@ -4,6 +4,10 @@ import * as React from "react";
 import {
   Dialog,
   DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,9 +26,8 @@ export function NewPlanDialog({ open, onOpenChange, onSubmit }: NewPlanDialogPro
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const trimmed = title.trim();
-    if (!trimmed) return;
-    onSubmit(trimmed, description.trim() || undefined);
+    if (!title.trim()) return;
+    onSubmit(title.trim(), description.trim() || undefined);
     setTitle("");
     setDescription("");
   }
@@ -32,41 +35,43 @@ export function NewPlanDialog({ open, onOpenChange, onSubmit }: NewPlanDialogPro
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <h2 className="text-lg font-semibold">New Plan</h2>
-            <p className="text-sm text-muted-foreground">
+        <form onSubmit={handleSubmit}>
+          <DialogHeader>
+            <DialogTitle>New Plan</DialogTitle>
+            <DialogDescription>
               Create a plan to discuss architecture and implementation with AI.
-            </p>
+            </DialogDescription>
+          </DialogHeader>
+          <div className="mt-4 space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="plan-title">Title</Label>
+              <Input
+                id="plan-title"
+                placeholder="e.g. Authentication system redesign"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                autoFocus
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="plan-desc">Description (optional)</Label>
+              <Textarea
+                id="plan-desc"
+                placeholder="Brief overview of what you want to plan…"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                rows={3}
+              />
+            </div>
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="plan-title">Title</Label>
-            <Input
-              id="plan-title"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="e.g. Authentication System Redesign"
-              autoFocus
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="plan-description">Description (optional)</Label>
-            <Textarea
-              id="plan-description"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Brief description of what you want to plan..."
-              rows={3}
-            />
-          </div>
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+          <DialogFooter className="mt-6">
+            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
             <Button type="submit" disabled={!title.trim()}>
               Create Plan
             </Button>
-          </div>
+          </DialogFooter>
         </form>
       </DialogContent>
     </Dialog>

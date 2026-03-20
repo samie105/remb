@@ -1,59 +1,75 @@
 <!-- remb-dynamic-context -->
 # Remb — Live Project Context
 
-> **Project**: remb | **Refreshed**: 2026-03-20T13:51
+> **Project**: remb | **Refreshed**: 2026-03-20T15:16
 > This file is auto-generated and gitignored. It injects real project context into every prompt.
 > For the full context bundle, call `remb_loadProjectContext`.
 
 ## Core Memories
 
-### Navigation Component Design (pattern)
-The Navigation feature is implemented in 'components/navigation.tsx' and 'components/ui/sidebar.tsx', featuring a responsive design that adjusts to different screen sizes. It includes dropdown menus and a context API for managing navigation state, improving usability.
+### API Layer Uses Dedicated Routes with Function Handlers for POST Requests (pattern)
+API endpoints such as app/api/vivid/token/route.ts and app/api/vivid/function/route.ts implement POST request handling using function handlers. This pattern streamlines backend integration, supports authentication validation via Clerk, and manages token creation and function invocation securely.
 
-### Theming System Implementation (decision)
-The theming system is defined in 'app/globals.css' and 'components/theme-provider.tsx', utilizing CSS variables for easy customization. This approach allows for a cohesive design across the application while supporting dark and light modes.
+### Authorization with Privy Uses Clerk JWTs for Secure Wallet Operations (knowledge)
+Authorization logic in lib/privy/authorization.ts uses Clerk-issued JWTs to authenticate with the Privy service, obtaining per-session authorization keys. This ensures secure wallet operations by validating authorization contexts before allowing blockchain transactions.
 
-### Form Management Components (knowledge)
-The Form Management feature is structured in 'components/ui/form.tsx', providing a consistent way to create and manage forms. It integrates React Context for managing form field state and validation, ensuring a smooth user experience.
+### Binary Options Trading UI Uses Lightweight-Charts for Performance (preference)
+The binary-client.tsx component provides an interactive UI for binary options trading across crypto, forex, and commodities. It leverages the lightweight-charts library for performant candlestick and volume charts, enabling real-time price updates and trade placement with responsive design.
 
-### Responsive Design in Authentication (decision)
-The Authentication feature, particularly in 'app/auth/login/page.tsx' and 'app/auth/signup/page.tsx', utilizes a responsive design to ensure accessibility across devices. This design choice was made to cater to both desktop and mobile users, enhancing the overall user experience.
+### Asset Management Uses Component-Based Architecture with Onboarding (pattern)
+The asset management UI is split between app/assets/page.tsx and components/assets/assets-client.tsx, encapsulating asset operations in reusable components. It supports multi-chain wallet display, token addition, and onboarding guidance to help users manage crypto assets effectively.
 
-### Account Management Structure (knowledge)
-The Account Management feature is implemented in 'components/dashboard/main/account-main.tsx', providing users with an interface to manage their personal information and security settings. It emphasizes a user-friendly design and includes a loading state to enhance user experience during data fetching.
+### Blockchain Integration Centralizes Chain and Token Configurations (knowledge)
+The lib/bridge-config.ts file maintains a constant structure defining supported blockchain networks and their tokens. This shared configuration enables seamless multi-chain token transactions and integration across the app's wallet and trading features.
 
 
 _...5 more memories — call `remb_loadProjectContext` for all_
 
 ## Current Session Activity
 
-- `13:44:52` saved `packages/cli-go/cmd/scan.go`
-- `13:45:01` 🤖 **ai**: There are plan files staged from a previous session. Let me be selective — only commit my changes:
-- `13:46:05` saved `components/dashboard/plan/plan-main.tsx`
-- `13:46:05` saved `components/dashboard/plan/plan-chat.tsx`
-- `13:46:05` saved `components/dashboard/plan/new-plan-dialog.tsx`
-- `13:46:05` saved `app/api/cli/context/bundle/route.ts`
-- `13:46:05` saved `packages/cli/src/commands/plan.ts`
-- `13:46:05` saved `components/dashboard/app-sidebar.tsx`
-- `13:46:05` saved `packages/cli/src/index.ts`
-- `13:46:05` saved `app/api/cli/plans/route.ts`
-- `13:46:05` saved `lib/supabase/types.ts`
-- `13:46:05` saved `packages/cli/src/commands/context.ts`
-- `13:46:05` saved `packages/vscode-extension/package.json`
-- `13:46:05` saved `packages/cli/package.json`
-- `13:46:05` saved `lib/mcp-memory-tools.ts`
-- `13:46:06` saved `packages/cli-npm/package.json`
-- `13:46:06` saved `packages/cli-go/cmd/root.go`
-- `13:47:00` viewing `.trigger/tmp/build-7N6lfP/chunk-4ZGI7K5S.mjs`
-- `13:47:02` 🤖 **ai**: Good, 6 files staged. Let me commit and push:
-Now deploy Trigger.dev (the scan task is only in the main app, not the CLIs):
-- `13:49:02` 🤖 **ai**: All done. Here's the summary:
+- `14:52:10` 🤖 **ai**: Interesting! In tar-stream v3.1.8, `extract` IS a function when using `require`. The issue might be with the ESM dynamic import `await import("tar-stream")`.
 
-### Updates applied
+Let me test that:
+- `14:55:15` 💬 **user**: how does this projject handle it's spot trading page?
+Fetching project context
+It seems I wasn't able to fetch detailed context about the project's cu
+- `14:56:10` 🤖 **ai**: The user has two issues:
+1. The AI in the plan chat doesn't know about the project context even though it was scanned - the system prompt needs to be enhanced to load actual project context (features,
+- `14:56:10` 🤖 **ai**: OK so the dynamic import does expose `extract` as a named export. So `const { extract } = await import("tar-stream")` should work... but the user is seeing "extract is not a function."
 
-**Go CLI** (
-+
-) — Added `Machine`, `EstimatedFiles`, `EstimatedSizeKB` fields to `ScanStatusResponse`. Poll loop now shows worker info once (`Worke
+Wait, the erro
+- `14:57:10` 🤖 **ai**: Interesting! So `tar-stream` v3.1.8 is a CommonJS module with `exports.extract = require('./extract')`. And when you do `const { extract } = await import("tar-stream")`, you get `extract` from the nam
+- `14:58:00` saved `lib/github-reader.ts`
+- `14:58:10` 🤖 **ai**: Interesting! So `tar-stream` v3.1.8 is a CommonJS module with `exports.extract = require('./extract')`. And when you do `const { extract } = await import("tar-stream")`, you get `extract` from the nam
+- `15:00:10` 🤖 **ai**: Now let me look at the context bundle route to understand how to load full project context:
+Now I have the full picture. Let me install react-markdown and start implementing.
+- `15:10:16` 🤖 **ai**: Zero errors. Now commit and deploy:
+- `15:11:13` 🤖 **ai**: Good, packages installed. Now let me check the current state of the files that seem to have been emptied in a previous session:
+All files still have content. Now let me proceed with the two main tasks
+- `15:11:15` saved `app/api/plan/chat/route.ts`
+- `15:11:25` saved `app/api/plan/chat/route.ts`
+- `15:11:44` saved `app/api/plan/chat/route.ts`
+- `15:12:13` 🤖 **ai**: ```
+```
+Now update the
+tool to return the full context, and update the system prompt:
+```
+```
+Now update the system prompt to include full project context:
+```
+```
+Now let me look at how the rest of t
+- `15:13:13` 🤖 **ai**: All UI components I need are available. Now let me build the redesigned plan-chat.tsx. This is a complete rewrite with:
+1. Rich tool call displays with expandable contexts (green for context fetching,
+- `15:14:53` saved `components/dashboard/plan/plan-chat.tsx`
+- `15:15:15` 🤖 **ai**: ```
+```
+Now add the markdown styles. Let me check the globals.css:
+- `15:15:27` saved `app/globals.css`
+- `15:16:13` 🤖 **ai**: Wait, it looks like those files from a previous session were staged and committed in the previous session... but now there are still staged files remaining. Let me see if the deploy was successful - i
+- `15:16:14` 🤖 **ai**: Now add the markdown styles for the chat:
+```
+```
 
 ## Project Context Summary
 

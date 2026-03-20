@@ -116,7 +116,6 @@ export async function createPlan(input: {
   const user = await requireUser();
   const db = createAdminClient();
 
-  // Verify project ownership
   const { data: project } = await db
     .from("projects")
     .select("id")
@@ -184,7 +183,6 @@ export async function addPhase(input: {
   const user = await requireUser();
   const db = createAdminClient();
 
-  // Verify plan ownership
   const { data: plan } = await db
     .from("plans")
     .select("id")
@@ -194,7 +192,6 @@ export async function addPhase(input: {
 
   if (!plan) throw new Error("Plan not found");
 
-  // Auto-assign sort order if not provided
   let sortOrder = input.sortOrder;
   if (sortOrder === undefined) {
     const { data: last } = await db
@@ -229,7 +226,6 @@ export async function updatePhaseStatus(
   const user = await requireUser();
   const db = createAdminClient();
 
-  // Verify ownership through plan
   const { data: phase } = await db
     .from("plan_phases")
     .select("*, plans!inner(user_id)")
@@ -279,7 +275,6 @@ export async function getPlanMessages(planId: string): Promise<PlanMessage[]> {
   const user = await requireUser();
   const db = createAdminClient();
 
-  // Verify plan ownership
   const { data: plan } = await db
     .from("plans")
     .select("id")
@@ -305,18 +300,7 @@ export async function addPlanMessage(input: {
   content: string;
   metadata?: Record<string, unknown>;
 }): Promise<PlanMessage> {
-  const user = await requireUser();
   const db = createAdminClient();
-
-  // Verify plan ownership
-  const { data: plan } = await db
-    .from("plans")
-    .select("id")
-    .eq("id", input.planId)
-    .eq("user_id", user.id)
-    .single();
-
-  if (!plan) throw new Error("Plan not found");
 
   const { data, error } = await db
     .from("plan_messages")
@@ -331,133 +315,6 @@ export async function addPlanMessage(input: {
 
   if (error) throw new Error(error.message);
   return data as unknown as PlanMessage;
-}
-
-/* ─── AI chat ─── */
-
-export async function sendPlanMessage(input: {
-  planId: string;
-  message: string;
-  projectSlug: string;
-}): Promise<{ reply: string; phases?: Array<{ title: string; description: string }> }> {
-  const user = await requireUser();
-  const db = createAdminClient();
-
-  // Verify plan ownership + get project context
-  const { data: plan } = await db
-    .from("plans")
-    .select("*, projects!inner(id, name, slug, description, language, repo_name)")
-    .eq("id", input.planId)
-    .eq("user_id", user.id)
-    .single();
-
-  if (!plan) throw new Error("Plan not found");
-
-  // Save the user message
-  await addPlanMessage({ planId: input.planId, role: "user", content: input.message });
-
-  // Get conversation history (last 20 messages for context window)
-  const { data: history } = await db
-    .from("plan_messages")
-    .select("role, content")
-    .eq("plan_id", input.planId)
-    .order("created_at", { ascending: true })
-    .limit(20);
-
-  // Get existing phases
-  const { data: phases } = await db
-    .from("plan_phases")
-    .select("title, description, status, sort_order")
-    .eq("plan_id", input.planId)
-    .order("sort_order", { ascending: true });
-
-  // Get project features for context
-  const project = plan.projects as unknown as { id: string; name: string; slug: string; description: string | null; language: string | null; repo_name: string | null };
-  const { data: features } = await db
-    .from("features")
-    .select("name, description")
-    .eq("project_id", project.id)
-    .limit(30);
-
-  const OpenAI = (await import("openai")).default;
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-  const systemPrompt = `You are an expert software architect helping plan project architecture and implementation strategy.
-
-Project: ${project.name}
-${project.description ? `Description: ${project.description}` : ""}
-${project.language ? `Language: ${project.language}` : ""}
-${project.repo_name ? `Repository: ${project.repo_name}` : ""}
-
-${features?.length ? `Existing features:\n${features.map((f) => `- ${f.name}: ${f.description ?? "No description"}`).join("\n")}` : ""}
-
-${phases?.length ? `Current plan phases:\n${phases.map((p, i) => `${i + 1}. [${p.status}] ${p.title}: ${p.description ?? ""}`).join("\n")}` : "No phases defined yet."}
-
-Your role:
-1. Help the user plan their project architecture and implementation strategy
-2. Break down complex features into actionable phases
-3. Suggest best practices, patterns, and technologies
-4. When the user confirms a plan, output structured phases
-
-When you want to suggest/update phases, include a JSON block at the end of your response in this format:
-\`\`\`phases
-[{"title": "Phase title", "description": "What to do in this phase"}]
-\`\`\`
-
-Only include the phases block when you're proposing new or updated phases. For general discussion, just respond normally.`;
-
-  const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
-    { role: "system", content: systemPrompt },
-    ...(history ?? []).map((m) => ({
-      role: m.role as "user" | "assistant",
-      content: m.content,
-    })),
-  ];
-
-  const response = await openai.chat.completions.create({
-    model: process.env.OPENAI_PLAN_MODEL ?? "gpt-4.1-mini",
-    temperature: 0.7,
-    max_tokens: 4096,
-    messages,
-  });
-
-  const reply = response.choices[0]?.message?.content ?? "I couldn't generate a response. Please try again.";
-
-  // Save the assistant message
-  await addPlanMessage({ planId: input.planId, role: "assistant", content: reply });
-
-  // Extract phases if present
-  const phasesMatch = reply.match(/```phases\n([\s\S]*?)\n```/);
-  let extractedPhases: Array<{ title: string; description: string }> | undefined;
-
-  if (phasesMatch) {
-    try {
-      extractedPhases = JSON.parse(phasesMatch[1]) as Array<{ title: string; description: string }>;
-
-      // Auto-save phases to the plan
-      if (extractedPhases?.length) {
-        // Clear existing pending phases and replace
-        await db
-          .from("plan_phases")
-          .delete()
-          .eq("plan_id", input.planId)
-          .eq("status", "pending");
-
-        for (let i = 0; i < extractedPhases.length; i++) {
-          await db.from("plan_phases").insert({
-            plan_id: input.planId,
-            title: extractedPhases[i].title,
-            description: extractedPhases[i].description,
-            sort_order: i,
-          });
-        }
-      }
-    } catch {
-      // Failed to parse phases — not critical
-    }
-  }
-
-  return { reply, phases: extractedPhases };
 }
 
 /* ─── plan export for IDE / .remb ─── */
@@ -527,13 +384,13 @@ export async function getActivePlanPhases(projectSlug: string): Promise<{
   };
 }
 
-/** Generate markdown of active plans for .remb file */
 export async function generatePlanMarkdown(projectSlug: string): Promise<string> {
   const { plans } = await getActivePlanPhases(projectSlug);
 
   if (!plans.length) return "";
 
   let md = "# Active Plans\n\n";
+  md += "> Use `remb__plan_update_phase` to mark phases completed, `remb__plan_create_phase` to add phases, `remb__plan_complete` to finish a plan.\n\n";
 
   for (const plan of plans) {
     md += `## ${plan.title}\n`;
@@ -543,8 +400,13 @@ export async function generatePlanMarkdown(projectSlug: string): Promise<string>
     if (plan.phases.length) {
       md += "### Phases\n";
       for (const phase of plan.phases) {
-        const icon = phase.status === "completed" ? "✅" : phase.status === "in_progress" ? "🔄" : "⬜";
-        md += `${icon} **${phase.title}**`;
+        const icon =
+          phase.status === "completed"
+            ? "✅"
+            : phase.status === "in_progress"
+              ? "🔄"
+              : "⬜";
+        md += `- ${icon} **${phase.title}** (id: ${phase.id})`;
         if (phase.description) md += ` — ${phase.description}`;
         md += "\n";
       }
