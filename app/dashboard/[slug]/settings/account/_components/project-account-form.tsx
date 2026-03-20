@@ -52,8 +52,9 @@ export function ProjectAccountForm({ project }: { project: ProjectRow }) {
     if (!confirm(`Delete project "${project.name}"? This cannot be undone.`)) return;
     setDeleting(true);
     try {
-      await deleteProject(project.id);
-      router.push("/dashboard");
+      const { remainingSlug } = await deleteProject(project.id);
+      try { localStorage.removeItem("remb:active-project"); } catch { /* noop */ }
+      router.push(remainingSlug ? `/dashboard/${remainingSlug}` : "/dashboard");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to delete project");
       setDeleting(false);

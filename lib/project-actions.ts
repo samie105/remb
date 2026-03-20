@@ -126,6 +126,22 @@ export async function createProject(input: {
 
   const slug = toSlug(input.name);
 
+  // Prevent duplicate repo linkage
+  if (input.repoName) {
+    const { data: existing } = await db
+      .from("projects")
+      .select("id, name")
+      .eq("user_id", user.id)
+      .eq("repo_name", input.repoName)
+      .limit(1);
+
+    if (existing && existing.length > 0) {
+      throw new Error(
+        `This repository is already linked to project "${existing[0].name}".`
+      );
+    }
+  }
+
   const { data, error } = await db
     .from("projects")
     .insert({
@@ -172,10 +188,54 @@ export async function updateProject(
   return data;
 }
 
-export async function deleteProject(id: string): Promise<void> {
+export async function deleteProject(id: string): Promise<{ remainingSlug: string | null }> {
   const user = await requireUser();
   const db = createAdminClient();
 
+  // Fetch project details for cleanup
+  const { data: project } = await db
+    .from("projects")
+    .select("id, repo_name, github_webhook_id")
+    .eq("id", id)
+    .eq("user_id", user.id)
+    .single();
+
+  if (!project) throw new Error("Project not found");
+
+  // Cancel any active/queued scans before deleting
+  await db
+    .from("scan_jobs")
+    .update({ status: "cancelled", finished_at: new Date().toISOString() })
+    .eq("project_id", id)
+    .in("status", ["queued", "running"]);
+
+  // Remove GitHub webhook if one was registered
+  if (project.repo_name && project.github_webhook_id) {
+    const { data: userData } = await db
+      .from("users")
+      .select("github_token")
+      .eq("id", user.id)
+      .single();
+
+    if (userData?.github_token) {
+      try {
+        await fetch(
+          `https://api.github.com/repos/${project.repo_name}/hooks/${project.github_webhook_id}`,
+          {
+            method: "DELETE",
+            headers: {
+              Authorization: `Bearer ${userData.github_token}`,
+              Accept: "application/vnd.github+json",
+            },
+          },
+        );
+      } catch {
+        // Non-fatal: webhook cleanup is best-effort
+      }
+    }
+  }
+
+  // Delete the project (cascades to features, entries, scans, memories, etc.)
   const { error } = await db
     .from("projects")
     .delete()
@@ -183,6 +243,16 @@ export async function deleteProject(id: string): Promise<void> {
     .eq("user_id", user.id);
 
   if (error) throw new Error(error.message);
+
+  // Return the first remaining project slug for smart redirect
+  const { data: remaining } = await db
+    .from("projects")
+    .select("slug")
+    .eq("user_id", user.id)
+    .order("updated_at", { ascending: false })
+    .limit(1);
+
+  return { remainingSlug: remaining?.[0]?.slug ?? null };
 }
 
 /**

@@ -79,15 +79,25 @@ function ImportRepoList({
   const [repos, setRepos] = React.useState<GitHubRepo[]>([]);
   const [isLoading, setIsLoading] = React.useState(true);
 
+  const [loadError, setLoadError] = React.useState<string | null>(null);
+
   React.useEffect(() => {
     let cancelled = false;
     setIsLoading(true);
-    getGitHubRepos().then((data) => {
-      if (!cancelled) {
-        setRepos(data);
-        setIsLoading(false);
-      }
-    });
+    setLoadError(null);
+    getGitHubRepos()
+      .then((data) => {
+        if (!cancelled) {
+          setRepos(data);
+          setIsLoading(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setLoadError("Failed to load repositories. Please try again.");
+          setIsLoading(false);
+        }
+      });
     return () => {
       cancelled = true;
     };
@@ -200,7 +210,31 @@ function ImportRepoList({
             })}
           </AnimatePresence>
         )}
-        {!isLoading && filtered.length === 0 && (
+        {!isLoading && loadError && (
+          <div className="py-8 text-center space-y-2">
+            <p className="text-[13px] text-destructive">{loadError}</p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setIsLoading(true);
+                setLoadError(null);
+                getGitHubRepos()
+                  .then((data) => {
+                    setRepos(data);
+                    setIsLoading(false);
+                  })
+                  .catch(() => {
+                    setLoadError("Failed to load repositories. Please try again.");
+                    setIsLoading(false);
+                  });
+              }}
+            >
+              Retry
+            </Button>
+          </div>
+        )}
+        {!isLoading && !loadError && filtered.length === 0 && (
           <div className="py-8 text-center text-[13px] text-muted-foreground">
             No repositories match your search.
           </div>

@@ -305,7 +305,8 @@ export function ProjectsClient({ account, initialProjects }: ProjectsClientProps
 
   async function handleDelete(id: string) {
     try {
-      await deleteProject(id);
+      const { remainingSlug } = await deleteProject(id);
+      try { localStorage.removeItem("remb:active-project"); } catch { /* noop */ }
       addNotification({
         type: "info",
         title: "Project removed",

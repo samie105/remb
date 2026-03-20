@@ -198,13 +198,17 @@ export function ProjectOverview({ project, features }: ProjectOverviewProps) {
     setIsDeleting(true);
     try {
       switch (confirmAction) {
-        case "delete":
-          await deleteProject(project.id);
+        case "delete": {
+          const { remainingSlug } = await deleteProject(project.id);
           addNotification({ type: "info", title: "Project deleted", message: `${project.name} has been permanently deleted.` });
           setConfirmAction(null);
-          router.push("/dashboard");
+          // Clear stale localStorage slug
+          try { localStorage.removeItem("remb:active-project"); } catch { /* noop */ }
+          // Redirect to next project or bare dashboard
+          router.push(remainingSlug ? `/dashboard/${remainingSlug}` : "/dashboard");
           router.refresh();
           return;
+        }
         case "clear":
           await clearProjectEntries(project.id);
           addNotification({ type: "info", title: "Entries cleared", message: `All context entries for ${project.name} have been removed.` });
