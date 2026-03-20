@@ -3,7 +3,7 @@ import chalk from "chalk";
 import ora from "ora";
 import { execSync } from "node:child_process";
 import { createApiClient } from "../lib/api-client.js";
-import { success, info, warn } from "../lib/output.js";
+import { success, info, warn, error } from "../lib/output.js";
 import { resolveProject, handleError } from "../lib/shared.js";
 
 const POLL_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes

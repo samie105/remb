@@ -136,11 +136,20 @@ export class ContextMirror implements vscode.Disposable {
       // Write an index.md with project overview
       await this.writeIndex(root, slug, resp.files);
 
+      // Track expected mirror paths for stale file cleanup
+      const expectedPaths = new Set<string>();
+      expectedPaths.add(".remb/index.md");
+
       // Write per-file context mirrors (with dependency info)
       for (const [filePath, entries] of Object.entries(resp.files)) {
         if (!shouldMirror(filePath) || entries.length === 0) continue;
+        const mirrorRel = toMirrorPath(filePath);
+        expectedPaths.add(mirrorRel);
         await this.writeMirrorFile(root, filePath, entries, this.fileDeps[filePath]);
       }
+
+      // Clean up stale .remb/ files not in the expected set
+      await this.cleanStaleMirrorFiles(root, expectedPaths);
 
       // Clear dirty files since we just synced everything
       this.dirtyFiles.clear();
@@ -307,7 +316,9 @@ export class ContextMirror implements vscode.Disposable {
       lines.push(`### ${dir}/`);
       for (const fp of paths) {
         const mirrorRel = toMirrorPath(fp);
-        lines.push(`- [${fp}](${mirrorRel})`);
+        // Links are relative to .remb/ directory since index.md is inside it
+        const linkTarget = mirrorRel.replace(/^\.remb\//, "");
+        lines.push(`- [${fp}](${linkTarget})`);
       }
       lines.push("");
     }
@@ -322,6 +333,38 @@ export class ContextMirror implements vscode.Disposable {
 
     try { await vscode.workspace.fs.createDirectory(dirUri); } catch { /* exists */ }
     await vscode.workspace.fs.writeFile(fileUri, Buffer.from(content, "utf-8"));
+  }
+
+  /** Remove .remb/ files that are no longer in the API response. */
+  private async cleanStaleMirrorFiles(
+    root: vscode.Uri,
+    expectedPaths: Set<string>,
+  ): Promise<void> {
+    const rembDir = vscode.Uri.joinPath(root, ".remb");
+    try {
+      await this.walkAndClean(root, rembDir, expectedPaths);
+    } catch { /* .remb dir might not exist */ }
+  }
+
+  private async walkAndClean(
+    root: vscode.Uri,
+    dir: vscode.Uri,
+    expectedPaths: Set<string>,
+  ): Promise<void> {
+    const entries = await vscode.workspace.fs.readDirectory(dir);
+    for (const [name, type] of entries) {
+      const childUri = vscode.Uri.joinPath(dir, name);
+      if (type === vscode.FileType.Directory) {
+        await this.walkAndClean(root, childUri, expectedPaths);
+      } else if (name.endsWith(".md")) {
+        // Skip session.md — that's managed by ConversationCapture
+        if (name === "session.md") continue;
+        const rel = vscode.workspace.asRelativePath(childUri, false);
+        if (!expectedPaths.has(rel)) {
+          try { await vscode.workspace.fs.delete(childUri); } catch { /* best-effort */ }
+        }
+      }
+    }
   }
 
   dispose(): void {

@@ -15,6 +15,7 @@ import { ContextMirror } from "./context-mirror";
 
 /** Module-level ref so deactivate() can log the session end. */
 let sessionTracker: SessionTracker | undefined;
+let conversationCapture: ConversationCapture | undefined;
 
 export async function activate(context: vscode.ExtensionContext) {
   // ── Auth ──────────────────────────────────────────────────
@@ -54,6 +55,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // ── Passive conversation capture ───────────────────────────
   const capture = new ConversationCapture(api, workspace, auth, context.storageUri);
+  conversationCapture = capture;
 
   // ── LM Tools (Copilot auto-invokable, with capture) ──────
   registerLmTools(context, api, workspace, capture);
@@ -182,7 +184,10 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(auth, workspace, statusBar, syncManager, instructions, capture, tracker, mirror, api);
 }
 
-export function deactivate(): Thenable<void> | undefined {
-  // Log session end before VS Code shuts down
-  return sessionTracker?.end();
+export async function deactivate(): Promise<void> {
+  // Flush conversation events + log session end before VS Code shuts down
+  await Promise.all([
+    conversationCapture?.finalFlush().catch(() => {}),
+    sessionTracker?.end().catch(() => {}),
+  ]);
 }

@@ -253,7 +253,7 @@ function createApiClient(opts = {}) {
     );
   }
   const projectConfig = findProjectConfig();
-  const baseUrl = (opts.apiUrl ?? projectConfig?.config.api_url ?? "http://localhost:3000").replace(/\/+$/, "");
+  const baseUrl = (opts.apiUrl ?? projectConfig?.config.api_url ?? "https://www.useremb.com").replace(/\/+$/, "");
   async function request(method, path, body, searchParams) {
     let url = `${baseUrl}${path}`;
     if (searchParams) {
@@ -2196,7 +2196,7 @@ var serveCommand = new Command7("serve").description("Start the MCP server for A
   }
   const server = new McpServer({
     name: "remb",
-    version: "0.1.10"
+    version: "0.1.12"
   });
   server.tool(
     "save_context",
@@ -3149,7 +3149,7 @@ Examples:
   if (!opts.force) {
     const gitCheck = checkGitStatus();
     if (!gitCheck.ok) {
-      error(gitCheck.message);
+      error2(gitCheck.message);
       process.exit(1);
     }
     if (gitCheck.warning) {
@@ -3252,7 +3252,7 @@ async function pollScanProgress(client, scanId) {
         warn(`${status.errors} file(s) had errors during scanning.`);
       }
     } else if (status.status === "failed") {
-      error("Scan failed. Check the dashboard for details.");
+      error2("Scan failed. Check the dashboard for details.");
     }
     break;
   }
@@ -3488,7 +3488,7 @@ function printMarkdown(entries) {
 var program = new Command14();
 program.name("remb").description(
   "Persistent memory layer for AI coding sessions \u2014 save, retrieve, and visualize project context."
-).version("0.1.10", "-v, --version").configureHelp({
+).version("0.1.12", "-v, --version").configureHelp({
   sortSubcommands: true,
   subcommandTerm: (cmd) => chalk16.bold(cmd.name())
 });

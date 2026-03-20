@@ -74,6 +74,7 @@ export class InstructionsManager {
   private disposables: vscode.Disposable[] = [];
   private refreshTimer: ReturnType<typeof setInterval> | undefined;
   private capture: ConversationCapture | undefined;
+  private isSyncingDynamic = false;
 
   constructor(
     private workspace: WorkspaceDetector,
@@ -154,6 +155,10 @@ export class InstructionsManager {
    * the actual context data is embedded directly in the instruction file.
    */
   async syncDynamic(): Promise<void> {
+    if (this.isSyncingDynamic) return;
+    this.isSyncingDynamic = true;
+
+    try {
     const slug = this.workspace.projectSlug;
     const isAuth = await this.auth.isAuthenticated();
     if (!slug || !isAuth) return;
@@ -180,11 +185,7 @@ export class InstructionsManager {
     // Build compact sections
     let contextSection = "";
     if (bundle?.markdown) {
-      contextSection =
-        bundle.markdown.length > 3000
-          ? bundle.markdown.slice(0, 3000) +
-            "\n\n_(truncated — call `remb_loadProjectContext` for full context)_"
-          : bundle.markdown;
+      contextSection = truncateAtSectionBoundary(bundle.markdown, 4000);
     }
 
     let historySection = "";
@@ -201,14 +202,20 @@ export class InstructionsManager {
 
     let memoriesSection = "";
     if (memories?.memories?.length) {
-      memoriesSection =
-        "## Core Memories\n\n" +
-        memories.memories
-          .map(
-            (m) =>
-              `### ${m.title} (${m.category})\n${m.content.slice(0, 300)}`
-          )
-          .join("\n\n");
+      // Use a total budget (2000 chars) instead of per-entry truncation
+      const memoryBudget = 2000;
+      let used = 0;
+      const blocks: string[] = [];
+      for (const m of memories.memories) {
+        const block = `### ${m.title} (${m.category})\n${m.content}`;
+        if (used + block.length > memoryBudget && blocks.length > 0) {
+          blocks.push(`\n_...${memories.memories.length - blocks.length} more memories — call \`remb_loadProjectContext\` for all_`);
+          break;
+        }
+        blocks.push(block);
+        used += block.length;
+      }
+      memoriesSection = "## Core Memories\n\n" + blocks.join("\n\n");
     }
 
     // Build session activity section from capture (real-time, no API call)
@@ -261,6 +268,9 @@ export class InstructionsManager {
 
     // Ensure dynamic files are gitignored
     await this.ensureGitignore(root);
+    } finally {
+      this.isSyncingDynamic = false;
+    }
   }
 
   /** Add dynamic context file paths to .gitignore if not already present. */
@@ -277,11 +287,18 @@ export class InstructionsManager {
     }
 
     const missing = DYNAMIC_GITIGNORE_ENTRIES.filter(
-      (entry) => !existing.includes(entry)
+      (entry) => {
+        // Check line-by-line to avoid false matches in comments
+        const lines = existing.split("\n").map((l) => l.trim());
+        return !lines.includes(entry);
+      }
     );
     if (missing.length === 0) return;
 
+    // Ensure file ends with a newline before appending
+    const separator = existing.length > 0 && !existing.endsWith("\n") ? "\n" : "";
     const additions =
+      separator +
       "\n# Remb dynamic context (auto-generated, do not commit)\n" +
       missing.join("\n") +
       "\n";
@@ -296,6 +313,26 @@ export class InstructionsManager {
     if (this.refreshTimer) clearInterval(this.refreshTimer);
     this.disposables.forEach((d) => d.dispose());
   }
+}
+
+/** Truncate markdown at the nearest section boundary (## heading) within the budget. */
+function truncateAtSectionBoundary(md: string, maxChars: number): string {
+  if (md.length <= maxChars) return md;
+
+  // Find the last ## heading that starts before maxChars
+  const sections = md.split(/(?=^## )/m);
+  let result = "";
+  for (const section of sections) {
+    if (result.length + section.length > maxChars && result.length > 0) break;
+    result += section;
+  }
+
+  // If we couldn't even fit the first section, hard-cut at maxChars
+  if (result.length === 0) {
+    result = md.slice(0, maxChars);
+  }
+
+  return result + "\n\n_(truncated — call `remb_loadProjectContext` for full context)_";
 }
 
 function generateBody(slug: string): string {

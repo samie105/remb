@@ -58,7 +58,7 @@ export class SessionTracker implements vscode.Disposable {
     this.disposables.push(
       vscode.workspace.onDidSaveTextDocument((doc) => {
         const rel = vscode.workspace.asRelativePath(doc.uri, false);
-        if (!rel.startsWith(".git/") && !rel.includes("node_modules")) {
+        if (!rel.startsWith(".git/") && !rel.includes("node_modules") && !rel.startsWith(".remb/")) {
           this.modifiedFiles.add(rel);
         }
       })

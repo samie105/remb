@@ -318,6 +318,8 @@ export class ConversationCapture implements vscode.Disposable {
   /** Rolling local session lines (kept in memory for the dynamic context feed). */
   private sessionLines: string[] = [];
   private chatWatcher: ChatSessionWatcher | undefined;
+  /** Track last focused editor path to avoid duplicate events. */
+  private lastFocusedPath: string | undefined;
 
   /** Callback to trigger instruction file refresh. Set after construction. */
   private syncDynamic: (() => Promise<void>) | undefined;
@@ -359,6 +361,9 @@ export class ConversationCapture implements vscode.Disposable {
         if (!editor) return;
         const rel = vscode.workspace.asRelativePath(editor.document.uri, false);
         if (this.shouldIgnore(rel)) return;
+        // Dedup: skip if refocusing the same file
+        if (rel === this.lastFocusedPath) return;
+        this.lastFocusedPath = rel;
         this.push("editor_focus", { path: rel });
       }),
     );
@@ -463,14 +468,12 @@ export class ConversationCapture implements vscode.Disposable {
     }
   }
 
-  /** Append a single event to `.remb/session.md` in the workspace. */
+  /** Pending lines to be flushed to the session file. */
+  private pendingSessionLines: string[] = [];
+  private sessionWriteTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /** Append a single event to `.remb/session.md` in the workspace (debounced). */
   private async appendToSessionFile(event: CaptureEvent): Promise<void> {
-    const root = vscode.workspace.workspaceFolders?.[0]?.uri;
-    if (!root) return;
-
-    const dirUri = vscode.Uri.joinPath(root, SESSION_DIR);
-    const fileUri = vscode.Uri.joinPath(dirUri, SESSION_FILE);
-
     const line = this.formatEventLine(event);
     this.sessionLines.push(line);
 
@@ -479,11 +482,29 @@ export class ConversationCapture implements vscode.Disposable {
       this.sessionLines.splice(0, this.sessionLines.length - 200);
     }
 
+    // Debounce disk writes — batch events and write at most every 500ms
+    this.pendingSessionLines.push(line);
+    if (!this.sessionWriteTimer) {
+      this.sessionWriteTimer = setTimeout(() => this.flushSessionFile(), 500);
+    }
+  }
+
+  /** Flush pending session lines to disk in a single write. */
+  private async flushSessionFile(): Promise<void> {
+    this.sessionWriteTimer = undefined;
+    if (this.pendingSessionLines.length === 0) return;
+
+    const lines = this.pendingSessionLines.splice(0);
+    const root = vscode.workspace.workspaceFolders?.[0]?.uri;
+    if (!root) return;
+
+    const dirUri = vscode.Uri.joinPath(root, SESSION_DIR);
+    const fileUri = vscode.Uri.joinPath(dirUri, SESSION_FILE);
+
     try {
       await vscode.workspace.fs.createDirectory(dirUri);
     } catch { /* exists */ }
 
-    // Read existing content (or start fresh with header)
     let existing = "";
     try {
       existing = Buffer.from(
@@ -497,7 +518,7 @@ export class ConversationCapture implements vscode.Disposable {
 
     await vscode.workspace.fs.writeFile(
       fileUri,
-      Buffer.from(existing + line + "\n", "utf-8"),
+      Buffer.from(existing + lines.join("\n") + "\n", "utf-8"),
     );
   }
 
@@ -516,24 +537,30 @@ export class ConversationCapture implements vscode.Disposable {
     if (smartEvents.length === 0) return;
 
     // Send raw events to server — it handles AI summarization, embedding, and dedup
-    this.api
-      .logSmartConversation({
+    try {
+      await this.api.logSmartConversation({
         events: smartEvents,
         projectSlug: slug,
-      })
-      .catch(() => {
-        // Fallback: if smart endpoint fails, use basic logConversation
-        const fallbackSummary = this.buildFallbackSummary(events);
-        if (fallbackSummary) {
-          this.api
-            .logConversation({
-              content: fallbackSummary,
-              projectSlug: slug,
-              type: "tool_call",
-            })
-            .catch(() => {});
-        }
       });
+    } catch {
+      // Fallback: if smart endpoint fails, try basic logConversation
+      const fallbackSummary = this.buildFallbackSummary(events);
+      if (fallbackSummary) {
+        try {
+          await this.api.logConversation({
+            content: fallbackSummary,
+            projectSlug: slug,
+            type: "tool_call",
+          });
+        } catch {
+          // Both endpoints failed — re-queue events (cap at 500 to avoid unbounded growth)
+          if (this.buffer.length < 500) {
+            this.buffer.unshift(...events);
+          }
+          return; // Skip syncDynamic since the server is unreachable
+        }
+      }
+    }
 
     // Refresh instruction files so the AI gets latest context
     this.syncDynamic?.().catch(() => {});
@@ -564,8 +591,9 @@ export class ConversationCapture implements vscode.Disposable {
       if (e.data.text) result.text = String(e.data.text);
       if (e.data.path) result.path = String(e.data.path);
       if (e.data.name) result.name = String(e.data.name);
+      // Prefer more specific text sources over generic `text`
       if (e.data.prompt) result.text = String(e.data.prompt);
-      if (e.data.input) result.text = String(e.data.input);
+      if (e.data.input && !e.data.prompt) result.text = String(e.data.input);
       return result;
     });
   }
@@ -615,11 +643,28 @@ export class ConversationCapture implements vscode.Disposable {
   }
 
   dispose(): void {
-    // Flush remaining events before shutdown
+    // Flush remaining session lines to disk synchronously if possible
+    if (this.sessionWriteTimer) {
+      clearTimeout(this.sessionWriteTimer);
+      this.flushSessionFile().catch(() => {});
+    }
+    // Flush remaining events to server (best-effort async)
     this.flush().catch(() => {});
     if (this.flushTimer) clearInterval(this.flushTimer);
     this.chatWatcher?.dispose();
     this.disposables.forEach((d) => d.dispose());
+  }
+
+  /**
+   * Flush all remaining data to the server. Returns a promise that can be
+   * awaited during extension deactivation to avoid data loss.
+   */
+  async finalFlush(): Promise<void> {
+    if (this.sessionWriteTimer) {
+      clearTimeout(this.sessionWriteTimer);
+      await this.flushSessionFile();
+    }
+    await this.flush();
   }
 }
 
@@ -639,9 +684,15 @@ export function wrapToolWithCapture<T>(
       options: vscode.LanguageModelToolInvocationOptions<T>,
       token: vscode.CancellationToken,
     ) {
-      const result = await tool.invoke(options, token);
-      capture.recordToolCall(toolName, options.input);
-      return result;
+      try {
+        const result = await tool.invoke(options, token);
+        capture.recordToolCall(toolName, options.input);
+        return result;
+      } catch (err) {
+        // Record failed tool calls too — useful debugging info
+        capture.recordToolCall(toolName, options.input);
+        throw err;
+      }
     },
     prepareInvocation: tool.prepareInvocation
       ? (

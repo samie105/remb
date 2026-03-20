@@ -57,6 +57,9 @@ export class ApiClient {
     this._lastLoginAt = Date.now();
   }
 
+  private static readonly MAX_RETRIES = 2;
+  private static readonly RETRY_BACKOFF = [1000, 2000];
+
   private async request<T = unknown>(
     method: string,
     path: string,
@@ -90,50 +93,77 @@ export class ApiClient {
       headers["Content-Type"] = "application/json";
     }
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30_000);
+    const jsonBody = body ? JSON.stringify(body) : undefined;
+    let lastError: unknown;
 
-    let res: Response;
-    try {
-      res = await fetch(url, {
-        method,
-        headers,
-        body: body ? JSON.stringify(body) : undefined,
-        signal: controller.signal,
-      });
-    } catch (err) {
-      clearTimeout(timeoutId);
-      if (err instanceof DOMException && err.name === "AbortError") {
-        this._onDidReceiveNetworkError.fire("Request timed out");
-        throw new ApiError(0, "Request timed out. The server may be unresponsive.");
-      }
-      const msg = err instanceof Error ? err.message : String(err);
-      this._onDidReceiveNetworkError.fire(msg);
-      throw new ApiError(0, `Network error: ${msg}`);
-    } finally {
-      clearTimeout(timeoutId);
-    }
+    for (let attempt = 0; attempt <= ApiClient.MAX_RETRIES; attempt++) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30_000);
 
-    const data = await res.json().catch(() => null);
-    if (!res.ok) {
-      const msg = (data as { error?: string })?.error ?? `HTTP ${res.status} ${res.statusText}`;
-      if (res.status === 401) {
-        // Grace period: if we just logged in, retry once after a short delay
-        // to avoid race with DB commit of the new API key
-        if (Date.now() - this._lastLoginAt < 10_000) {
-          await new Promise((r) => setTimeout(r, 2_000));
-          // Re-fetch the API key — it may have changed after re-login
-          const freshKey = await this.getApiKey();
-          const retryHeaders = { ...headers, Authorization: `Bearer ${freshKey}` };
-          const retry = await fetch(url, { method, headers: retryHeaders, body: body ? JSON.stringify(body) : undefined });
-          if (retry.ok) return (await retry.json().catch(() => null)) as T;
+      let res: Response;
+      try {
+        res = await fetch(url, {
+          method,
+          headers,
+          body: jsonBody,
+          signal: controller.signal,
+        });
+      } catch (err) {
+        clearTimeout(timeoutId);
+        lastError = err;
+
+        // Retry on network errors (but not abort timeout on last attempt)
+        if (attempt < ApiClient.MAX_RETRIES) {
+          await new Promise((r) => setTimeout(r, ApiClient.RETRY_BACKOFF[attempt] ?? 2000));
+          continue;
         }
-        this._onDidReceiveAuthError.fire();
-        this.promptReAuth();
+
+        if (err instanceof DOMException && err.name === "AbortError") {
+          this._onDidReceiveNetworkError.fire("Request timed out");
+          throw new ApiError(0, "Request timed out. The server may be unresponsive.");
+        }
+        const msg = err instanceof Error ? err.message : String(err);
+        this._onDidReceiveNetworkError.fire(msg);
+        throw new ApiError(0, `Network error: ${msg}`);
+      } finally {
+        clearTimeout(timeoutId);
       }
-      throw new ApiError(res.status, msg, data);
+
+      // Handle 429 rate limiting — wait and retry
+      if (res.status === 429 && attempt < ApiClient.MAX_RETRIES) {
+        const retryAfter = res.headers.get("Retry-After");
+        const waitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 || 5000 : 5000;
+        await new Promise((r) => setTimeout(r, Math.min(waitMs, 30_000)));
+        continue;
+      }
+
+      // Retry on 5xx server errors
+      if (res.status >= 500 && attempt < ApiClient.MAX_RETRIES) {
+        await new Promise((r) => setTimeout(r, ApiClient.RETRY_BACKOFF[attempt] ?? 2000));
+        continue;
+      }
+
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        const msg = (data as { error?: string })?.error ?? `HTTP ${res.status} ${res.statusText}`;
+        if (res.status === 401) {
+          // Grace period: if we just logged in, retry once after a short delay
+          if (Date.now() - this._lastLoginAt < 10_000) {
+            await new Promise((r) => setTimeout(r, 2_000));
+            const freshKey = await this.getApiKey();
+            const retryHeaders = { ...headers, Authorization: `Bearer ${freshKey}` };
+            const retry = await fetch(url, { method, headers: retryHeaders, body: jsonBody });
+            if (retry.ok) return (await retry.json().catch(() => null)) as T;
+          }
+          this._onDidReceiveAuthError.fire();
+          this.promptReAuth();
+        }
+        throw new ApiError(res.status, msg, data);
+      }
+      return data as T;
     }
-    return data as T;
+
+    throw lastError;
   }
 
   private async promptReAuth() {

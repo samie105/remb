@@ -37,7 +37,7 @@ export function createApiClient(opts: ClientOptions = {}) {
   const baseUrl = (
     opts.apiUrl ??
     projectConfig?.config.api_url ??
-    "http://localhost:3000"
+    "https://www.useremb.com"
   ).replace(/\/+$/, "");
 
   async function request<T = unknown>(

@@ -33,7 +33,11 @@ export class WorkspaceDetector {
   }
 
   private async detect(): Promise<void> {
-    const files = await vscode.workspace.findFiles(".remb.yml", null, 1);
+    // Search root first, then subdirectories for monorepo support
+    let files = await vscode.workspace.findFiles(".remb.yml", null, 1);
+    if (files.length === 0) {
+      files = await vscode.workspace.findFiles("**/.remb.yml", "**/node_modules/**", 1);
+    }
     if (files.length === 0) {
       this._config = null;
       this._onDidChangeProject.fire(null);
