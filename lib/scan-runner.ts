@@ -1,11 +1,10 @@
 /**
  * Core scan pipeline. Lives outside "use server" so it can run inside an
- * API route handler that has a proper maxDuration budget.
+ * API route handler that has a proper maxDuration budget (800s on Vercel Pro).
  *
- * Chunked scanning: large repos are processed CHUNK_SIZE files per invocation.
- * Each invocation fires the next one (fire-and-forget) before returning, so
- * there is no single-function timeout cap. The queued file list and running
- * totals are persisted in scan_jobs.result between chunks (prefixed with _).
+ * Single-invocation: all files are processed in one call. Priority sorting
+ * ensures the most important files (src/, app/, lib/) are scanned first.
+ * A hard cap of MAX_FILES prevents runaway scans on very large repos.
  */
 
 import { createAdminClient } from "@/lib/supabase/server";
@@ -23,8 +22,8 @@ import { extractFeaturesFromFile, generateEmbedding } from "@/lib/openai";
 import { extractImports, getInternalImports } from "@/lib/import-parser";
 import type { ScanLogEntry, ScanResult } from "@/lib/scan-actions";
 
-/** Files processed per serverless invocation. Keeps each call well under Vercel's limit. */
-const CHUNK_SIZE = 15;
+/** Maximum files to process in a single scan. Priority-sorted so the most important files come first. */
+const MAX_FILES = 300;
 
 /** Retry an async operation up to `maxAttempts` times with exponential back-off. */
 async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 3, delayMs = 1000): Promise<T> {
@@ -48,8 +47,6 @@ export async function runScan(
   repoName: string,
   branch: string,
   githubToken: string,
-  /** Index into the queued file list to start from. 0 = initial call (setup + first chunk). */
-  chunkOffset = 0,
 ): Promise<ScanResult> {
   const db = createAdminClient();
 
@@ -77,13 +74,6 @@ export async function runScan(
       logs,
       tech_stack: [...techStackSet],
       languages,
-      // Internal chunking fields consumed by continuation calls
-      _queued_files: queuedFiles,
-      _scan_start_ms: scanStartMs,
-      _commit_sha: commitSha,
-      _resolved_branch: resolvedBranch,
-      _feature_ids: [...featureIdSet],
-      _file_index: [...fileIndex],
     };
   }
 
@@ -131,11 +121,10 @@ export async function runScan(
       );
     }
 
-    if (chunkOffset === 0) {
-      // ══════════════════════════════════════════════════════════════════════════
-      // INITIAL CALL — fetch file tree, build smart-scan filter, store queue
-      // ══════════════════════════════════════════════════════════════════════════
-      scanStartMs = Date.now();
+    // ══════════════════════════════════════════════════════════════════════════
+    // SETUP — fetch file tree, build smart-scan filter, prepare file queue
+    // ══════════════════════════════════════════════════════════════════════════
+    scanStartMs = Date.now();
 
     // 0. Fetch current commit SHA (non-fatal)
     try {
@@ -275,8 +264,28 @@ export async function runScan(
     // Clear stale file dependencies for this project before rebuilding
     await db.from("file_dependencies").delete().eq("project_id", projectId);
 
-    // Persist the full queue and initial state to DB so continuation chunks can
-    // pick up where this invocation left off without re-fetching the file tree.
+    // ── Priority sort + cap ──────────────────────────────────────────────────
+    // Process the most important files first (source code > config > tests).
+    // Cap at MAX_FILES to stay within the serverless timeout budget.
+    const priorityPrefixes = ["src/", "app/", "lib/", "pages/", "components/", "server/"];
+    queuedFiles.sort((a, b) => {
+      const aP = priorityPrefixes.some((p) => a.path.startsWith(p)) ? 0 : 1;
+      const bP = priorityPrefixes.some((p) => b.path.startsWith(p)) ? 0 : 1;
+      return aP - bP;
+    });
+
+    if (queuedFiles.length > MAX_FILES) {
+      const skippedByCapCount = queuedFiles.length - MAX_FILES;
+      queuedFiles = queuedFiles.slice(0, MAX_FILES);
+      logs.push({
+        timestamp: new Date().toISOString(),
+        file: "",
+        status: "skipped",
+        message: `Capped scan at ${MAX_FILES} files (skipped ${skippedByCapCount} lower-priority files)`,
+      });
+    }
+
+    // Persist initial state to DB so the UI can show progress immediately
     await db
       .from("scan_jobs")
       .update({
@@ -291,54 +300,12 @@ export async function runScan(
       })
       .eq("id", scanJobId);
 
-    } else {
-      // ══════════════════════════════════════════════════════════════════════════
-      // CONTINUATION CALL — restore state persisted by a previous chunk
-      // ══════════════════════════════════════════════════════════════════════════
-      const { data: jobRow } = await db
-        .from("scan_jobs")
-        .select("result")
-        .eq("id", scanJobId)
-        .single();
-
-      if (!jobRow?.result) throw new Error("Cannot resume scan: job state not found in DB");
-
-      const saved = jobRow.result as Record<string, unknown>;
-
-      queuedFiles   = (saved._queued_files  as typeof queuedFiles)           ?? [];
-      scanStartMs   = (saved._scan_start_ms  as number)                       ?? Date.now();
-      commitSha     = saved._commit_sha       as string | undefined;
-      resolvedBranch = (saved._resolved_branch as string)                     ?? branch;
-      filesTotal    = (saved.files_total      as number)                      ?? 0;
-      filesProcessed = (saved.files_scanned   as number)                      ?? 0;
-      featuresCreated = (saved.features_created as number)                    ?? 0;
-      entriesCreated  = (saved.entries_created  as number)                    ?? 0;
-      errors          = (saved.errors           as number)                    ?? 0;
-      logs            = [...((saved.logs ?? []) as ScanLogEntry[])];
-
-      for (const t of (saved.tech_stack ?? []) as string[])       techStackSet.add(t);
-      Object.assign(languages, (saved.languages ?? {}) as Record<string, number>);
-      for (const id of (saved._feature_ids ?? []) as string[])    featureIdSet.add(id);
-      fileIndex = new Set((saved._file_index ?? []) as string[]);
-
-      const chunkNum = Math.floor(chunkOffset / CHUNK_SIZE) + 1;
-      logs.push({
-        timestamp: new Date().toISOString(),
-        file: "",
-        status: "scanning",
-        message: `Resuming scan — chunk ${chunkNum}: files ${chunkOffset + 1}–${Math.min(chunkOffset + CHUNK_SIZE, queuedFiles.length)} of ${queuedFiles.length}`,
-      });
-    }
-
     // ═══════════════════════════════════════════════════════════════════════════
-    // CHUNK PROCESSING — same logic regardless of initial vs continuation call
+    // FILE PROCESSING — process all queued files in a single invocation
     // ═══════════════════════════════════════════════════════════════════════════
-    const chunkFiles = queuedFiles.slice(chunkOffset, chunkOffset + CHUNK_SIZE);
-    const nextOffset = chunkOffset + CHUNK_SIZE;
-    const hasMoreChunks = nextOffset < queuedFiles.length;
 
-    // 2. Process this chunk's files in batches of 3 (low concurrency avoids OpenAI rate limits)
-    await processInBatches(chunkFiles, 3, async (file) => {
+    // Process files in batches of 3 (low concurrency avoids OpenAI rate limits)
+    await processInBatches(queuedFiles, 3, async (file) => {
       // Check if the scan was cancelled between batches
       const { data: jobCheck } = await db
         .from("scan_jobs")
@@ -560,41 +527,8 @@ export async function runScan(
     });
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // 3. Chain to next chunk OR finalize
+    // FINALIZE — mark scan as done
     // ═══════════════════════════════════════════════════════════════════════════
-    if (hasMoreChunks) {
-      // Persist current progress and hand off to the next invocation.
-      await db
-        .from("scan_jobs")
-        .update({
-          result: buildJobResult({
-            files_total: filesTotal,
-            files_scanned: filesProcessed,
-            features_created: featuresCreated,
-            entries_created: entriesCreated,
-            errors,
-            duration_ms: Date.now() - scanStartMs,
-          }) as Json,
-        })
-        .eq("id", scanJobId);
-
-      // Fire-and-forget: the next chunk runs in its own serverless invocation.
-      chainNextChunk(scanJobId, projectId, repoName, resolvedBranch, githubToken, nextOffset);
-
-      return {
-        files_total: filesTotal,
-        files_scanned: filesProcessed,
-        features_created: featuresCreated,
-        entries_created: entriesCreated,
-        errors,
-        duration_ms: Date.now() - scanStartMs,
-        logs,
-        tech_stack: [...techStackSet],
-        languages,
-      };
-    }
-
-    // Final write — strip internal fields and mark done
     const duration_ms = Date.now() - scanStartMs;
     const result: ScanResult = {
       files_total: filesTotal,
@@ -650,61 +584,6 @@ export async function runScan(
 
     throw err;
   }
-}
-
-/**
- * Fire the next chunk as a new serverless invocation (fire-and-forget).
- * This allows arbitrarily large repos to be scanned without hitting any single
- * function's timeout — each invocation handles CHUNK_SIZE files.
- */
-function chainNextChunk(
-  scanJobId: string,
-  projectId: string,
-  repoName: string,
-  branch: string,
-  githubToken: string,
-  chunkOffset: number,
-) {
-  const appUrl = getInternalApiUrl();
-  const secret = process.env.SCAN_WORKER_SECRET?.trim();
-  if (!secret) {
-    console.error(`[scan-runner] SCAN_WORKER_SECRET is not set — cannot chain next chunk (offset ${chunkOffset}). Scan will stop here.`);
-    return;
-  }
-
-  fetch(`${appUrl}/api/scan/run`, {
-    method: "POST",
-    headers: getInternalFetchHeaders({
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${secret}`,
-    }),
-    body: JSON.stringify({ scanJobId, projectId, repoName, branch, githubToken, chunkOffset }),
-  })
-    .then(async (res) => {
-      if (!res.ok) {
-        const body = await res.text().catch(() => "");
-        console.error(`[scan-runner] Chunk dispatch returned ${res.status} at offset ${chunkOffset}: ${body.slice(0, 200)}`);
-        // Mark scan as failed so it doesn't hang forever
-        const db = createAdminClient();
-        await db.from("scan_jobs").update({
-          status: "failed",
-          finished_at: new Date().toISOString(),
-          result: { error: `Chunk dispatch failed at offset ${chunkOffset}: HTTP ${res.status}` },
-        }).eq("id", scanJobId).then(undefined, () => {});
-        await db.from("projects").update({ status: "active" }).eq("id", projectId).then(undefined, () => {});
-      }
-    })
-    .catch(async (err) => {
-      console.error(`[scan-runner] Failed to chain chunk at offset ${chunkOffset}:`, err);
-      // Mark scan as failed so it doesn't hang forever
-      const db = createAdminClient();
-      await db.from("scan_jobs").update({
-        status: "failed",
-        finished_at: new Date().toISOString(),
-        result: { error: `Chunk chain failed at offset ${chunkOffset}: ${String(err)}` },
-      }).eq("id", scanJobId).then(undefined, () => {});
-      await db.from("projects").update({ status: "active" }).eq("id", projectId).then(undefined, () => {});
-    });
 }
 
 function triggerQueueProcessing() {

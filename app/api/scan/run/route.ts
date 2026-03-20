@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createAdminClient } from "@/lib/supabase/server";
 import { runScan } from "@/lib/scan-runner";
 
 /**
  * Give this function a long timeout budget so the full scan pipeline
- * (GitHub tree fetch + up to 100 GPT calls + embeddings) can complete.
+ * (GitHub tree fetch + up to 300 GPT calls + embeddings) can complete
+ * in a single invocation.
  *
  * Vercel Pro:  maxDuration = 800 (max for paid plans)
  * Vercel Hobby: maxDuration = 60  (1 min — increase to Pro for heavy repos)
@@ -47,8 +47,6 @@ export async function POST(request: NextRequest) {
     repoName: string;
     branch: string;
     githubToken: string;
-    /** Offset into the queued file list. Omit (or 0) for initial call; >0 for continuation chunks. */
-    chunkOffset?: number;
   };
 
   try {
@@ -57,15 +55,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { scanJobId, projectId, repoName, branch, githubToken, chunkOffset } = body;
+  const { scanJobId, projectId, repoName, branch, githubToken } = body;
   if (!scanJobId || !projectId || !repoName || !branch || !githubToken) {
     return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
   }
 
   // ------------------------------------------------------------------
   // 3. Confirm the scan job still exists and is in "running" state
-  //    (guards against double-fire or stale requests)
   // ------------------------------------------------------------------
+  const { createAdminClient } = await import("@/lib/supabase/server");
   const db = createAdminClient();
   const { data: job } = await db
     .from("scan_jobs")
@@ -84,7 +82,7 @@ export async function POST(request: NextRequest) {
   // 4. Run the pipeline — this is the long-running part
   // ------------------------------------------------------------------
   try {
-    const result = await runScan(scanJobId, projectId, repoName, branch, githubToken, chunkOffset ?? 0);
+    const result = await runScan(scanJobId, projectId, repoName, branch, githubToken);
     return NextResponse.json({ ok: true, files_scanned: result.files_scanned });
   } catch (err) {
     // runScan already marked the job "failed" in DB before throwing
