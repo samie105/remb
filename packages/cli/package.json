@@ -1,6 +1,6 @@
 {
   "name": "remb-cli",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "description": "CLI for Remb — persistent memory layer for AI coding sessions",
   "type": "module",
   "bin": {
