@@ -305,3 +305,83 @@ export async function processInBatches<T>(
     await Promise.all(batch.map(fn));
   }
 }
+
+/**
+ * Download the entire repo as a tarball and extract file contents in one shot.
+ * Returns a Map<filePath, content> for all files matching the given paths.
+ *
+ * This is dramatically faster than individual getFileContent calls:
+ *   - 1 HTTP request vs N requests
+ *   - No rate limiting concerns
+ *   - All content available immediately for import parsing + AI extraction
+ *
+ * Falls back to per-file fetching if tarball download fails.
+ */
+export async function downloadRepoContents(
+  token: string,
+  repoName: string,
+  branch: string,
+  filePaths: Set<string>,
+): Promise<Map<string, string>> {
+  const contents = new Map<string, string>();
+
+  const res = await fetch(
+    `${GITHUB_API}/repos/${repoName}/tarball/${encodeURIComponent(branch)}`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+      },
+      signal: AbortSignal.timeout(120_000), // 2 min timeout for large repos
+      redirect: "follow",
+    },
+  );
+
+  if (!res.ok) {
+    throw new Error(`Tarball download failed: ${res.status} ${res.statusText}`);
+  }
+
+  // GitHub returns a gzipped tarball — decompress and parse
+  const { Readable } = await import("node:stream");
+  const { createGunzip } = await import("node:zlib");
+  const { extract } = await import("tar-stream");
+
+  const buffer = Buffer.from(await res.arrayBuffer());
+  const extractor = extract();
+
+  return new Promise<Map<string, string>>((resolve, reject) => {
+    extractor.on("entry", (header, stream, next) => {
+      // GitHub tarball paths are: <owner>-<repo>-<sha>/<actual-path>
+      // Strip the first directory component to get the real file path
+      const fullPath = header.name;
+      const slashIdx = fullPath.indexOf("/");
+      const repoPath = slashIdx >= 0 ? fullPath.slice(slashIdx + 1) : fullPath;
+
+      if (header.type === "file" && filePaths.has(repoPath)) {
+        const chunks: Buffer[] = [];
+        stream.on("data", (chunk: Buffer) => chunks.push(chunk));
+        stream.on("end", () => {
+          const text = Buffer.concat(chunks).toString("utf-8");
+          // Skip files that are too large (>100KB) or binary-looking
+          if (text.length <= 100_000 && !text.includes("\0")) {
+            contents.set(repoPath, text);
+          }
+          next();
+        });
+        stream.on("error", () => next());
+      } else {
+        stream.resume();
+        next();
+      }
+    });
+
+    extractor.on("finish", () => resolve(contents));
+    extractor.on("error", reject);
+
+    const gunzip = createGunzip();
+    gunzip.on("error", reject);
+
+    const readable = Readable.from(buffer);
+    readable.pipe(gunzip).pipe(extractor);
+  });
+}

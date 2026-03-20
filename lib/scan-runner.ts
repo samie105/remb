@@ -13,6 +13,7 @@ import type { Json } from "@/lib/supabase/types";
 import {
   getRepoFiles,
   getFileContent,
+  downloadRepoContents,
   getLatestCommitSha,
   getRembIgnorePatterns,
   parseIgnorePatterns,
@@ -323,13 +324,8 @@ export async function runScan(
       .eq("id", scanJobId);
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // PASS 1: Fetch file contents + build dependency graph (no AI cost)
+    // PASS 1: Download all files + build dependency graph (no AI cost)
     // ═══════════════════════════════════════════════════════════════════════════
-
-    await pushLog(
-      { timestamp: new Date().toISOString(), file: "", status: "scanning", message: `Indexing imports for ${queuedFiles.length} files...` },
-      { files_total: filesTotal, files_scanned: 0, features_created: 0, entries_created: 0, errors: 0, duration_ms: Date.now() - scanStartMs },
-    );
 
     // Import graph: source → [targets]
     const importGraph = new Map<string, string[]>();
@@ -337,93 +333,130 @@ export async function runScan(
     const reverseGraph = new Map<string, string[]>();
     // Per-file import details for passing to AI
     const fileImports = new Map<string, Array<{ path: string; symbols: string[] }>>();
-    // Track which files had valid content (not oversized or failed)
-    const validFiles = new Set<string>();
+    // Content cache: holds all file contents from tarball (or per-file fallback)
+    const contentCache = new Map<string, string>();
 
-    // Fetch contents in batches of 5, extract imports, then DISCARD content to save memory.
-    // Check for cancellation every 10 files and log progress every 20 files.
-    let pass1Processed = 0;
-    const pass1Total = queuedFiles.length;
+    // ── Step 1a: Bulk-download all file contents via tarball (1 HTTP request) ──
+    const allQueuedPaths = new Set(queuedFiles.map((f) => f.path));
 
-    for (let i = 0; i < queuedFiles.length; i += 5) {
-      // ── Cancellation check every batch ──
-      if (i > 0 && i % 10 === 0) {
-        if (await isCancelled()) throw new Error("Scan cancelled by user");
+    await pushLog(
+      { timestamp: new Date().toISOString(), file: "", status: "scanning", message: `Downloading ${queuedFiles.length} files via tarball...` },
+      { files_total: filesTotal, files_scanned: 0, features_created: 0, entries_created: 0, errors: 0, duration_ms: Date.now() - scanStartMs },
+    );
+
+    let usedTarball = false;
+    try {
+      const tarContents = await downloadRepoContents(githubToken, repoName, resolvedBranch, allQueuedPaths);
+      for (const [path, content] of tarContents) {
+        contentCache.set(path, content);
       }
+      usedTarball = true;
+      await pushLog(
+        { timestamp: new Date().toISOString(), file: "", status: "done", message: `Downloaded ${contentCache.size}/${queuedFiles.length} files via tarball` },
+        { files_total: filesTotal, files_scanned: 0, features_created: 0, entries_created: 0, errors: 0, duration_ms: Date.now() - scanStartMs },
+      );
+    } catch (e) {
+      // Tarball failed — fall back to per-file fetching
+      const msg = e instanceof Error ? e.message : String(e);
+      await pushLog(
+        { timestamp: new Date().toISOString(), file: "", status: "error", message: `Tarball download failed (${msg}), falling back to per-file fetch` },
+        { files_total: filesTotal, files_scanned: 0, features_created: 0, entries_created: 0, errors: 0, duration_ms: Date.now() - scanStartMs },
+      );
+    }
 
-      const batch = queuedFiles.slice(i, i + 5);
-      // Collect dependency rows for bulk upsert after the batch
-      const batchDepRows: Array<{
-        project_id: string;
-        source_path: string;
-        target_path: string;
-        import_type: string;
-        imported_symbols: string[] | null;
-        scan_job_id: string;
-      }> = [];
+    // ── Step 1b: Fetch any missing files individually (tarball fallback or missing files) ──
+    const missingPaths = queuedFiles.filter((f) => !contentCache.has(f.path));
+    if (missingPaths.length > 0) {
+      await pushLog(
+        { timestamp: new Date().toISOString(), file: "", status: "scanning", message: `Fetching ${missingPaths.length} remaining files individually...` },
+        { files_total: filesTotal, files_scanned: 0, features_created: 0, entries_created: 0, errors: 0, duration_ms: Date.now() - scanStartMs },
+      );
 
-      await Promise.all(batch.map(async (file) => {
-        try {
-          const content = await getFileContent(githubToken, repoName, file.path);
-          if (content.length > 100_000) return; // Skip oversized files
-          validFiles.add(file.path);
-
-          // Extract imports (fast regex, no LLM)
-          const allImports = extractImports(content, file.path, fileIndex);
-          const internalImports = getInternalImports(allImports);
-
-          const targets: string[] = [];
-          const imports: Array<{ path: string; symbols: string[] }> = [];
-
-          for (const imp of internalImports) {
-            if (imp.resolvedPath) {
-              targets.push(imp.resolvedPath);
-              imports.push({ path: imp.resolvedPath, symbols: imp.symbols });
-              // Build reverse graph
-              const rev = reverseGraph.get(imp.resolvedPath) ?? [];
-              rev.push(file.path);
-              reverseGraph.set(imp.resolvedPath, rev);
-            }
-          }
-
-          importGraph.set(file.path, targets);
-          fileImports.set(file.path, imports);
-
-          // Collect dependency rows for bulk upsert (outside Promise.all)
-          for (const imp of internalImports) {
-            if (imp.resolvedPath) {
-              batchDepRows.push({
-                project_id: projectId,
-                source_path: file.path,
-                target_path: imp.resolvedPath,
-                import_type: imp.importType,
-                imported_symbols: imp.symbols.length > 0 ? imp.symbols : null,
-                scan_job_id: scanJobId,
-              });
-            }
-          }
-        } catch (e) {
-          // Log the failure so it's visible instead of silently swallowing
-          const msg = e instanceof Error ? e.message : String(e);
-          logs.push({ timestamp: new Date().toISOString(), file: file.path, status: "error" as const, message: `Import index failed: ${msg}` });
-          errors++;
+      for (let i = 0; i < missingPaths.length; i += 5) {
+        if (i > 0 && i % 10 === 0) {
+          if (await isCancelled()) throw new Error("Scan cancelled by user");
         }
-      }));
+        const batch = missingPaths.slice(i, i + 5);
+        await Promise.all(batch.map(async (file) => {
+          try {
+            const content = await getFileContent(githubToken, repoName, file.path);
+            if (content.length <= 100_000) contentCache.set(file.path, content);
+          } catch {
+            // non-fatal
+          }
+        }));
 
-      // Bulk upsert file dependencies after each batch (single DB call, not per-file)
-      if (batchDepRows.length > 0) {
-        await db.from("file_dependencies").upsert(batchDepRows, {
+        await pushLog(
+          { timestamp: new Date().toISOString(), file: "", status: "scanning", message: `Fetched: ${Math.min(i + 5, missingPaths.length)}/${missingPaths.length} remaining files` },
+          { files_total: filesTotal, files_scanned: 0, features_created: 0, entries_created: 0, errors: 0, duration_ms: Date.now() - scanStartMs },
+        );
+      }
+    }
+
+    // ── Step 1c: Extract imports from all cached content (pure CPU, very fast) ──
+    await pushLog(
+      { timestamp: new Date().toISOString(), file: "", status: "scanning", message: `Indexing imports for ${contentCache.size} files...` },
+      { files_total: filesTotal, files_scanned: 0, features_created: 0, entries_created: 0, errors: 0, duration_ms: Date.now() - scanStartMs },
+    );
+
+    const validFiles = new Set<string>();
+    const allDepRows: Array<{
+      project_id: string;
+      source_path: string;
+      target_path: string;
+      import_type: string;
+      imported_symbols: string[] | null;
+      scan_job_id: string;
+    }> = [];
+
+    for (const [filePath, content] of contentCache) {
+      try {
+        validFiles.add(filePath);
+        const allImports = extractImports(content, filePath, fileIndex);
+        const internalImports = getInternalImports(allImports);
+
+        const targets: string[] = [];
+        const imports: Array<{ path: string; symbols: string[] }> = [];
+
+        for (const imp of internalImports) {
+          if (imp.resolvedPath) {
+            targets.push(imp.resolvedPath);
+            imports.push({ path: imp.resolvedPath, symbols: imp.symbols });
+            const rev = reverseGraph.get(imp.resolvedPath) ?? [];
+            rev.push(filePath);
+            reverseGraph.set(imp.resolvedPath, rev);
+          }
+        }
+
+        importGraph.set(filePath, targets);
+        fileImports.set(filePath, imports);
+
+        for (const imp of internalImports) {
+          if (imp.resolvedPath) {
+            allDepRows.push({
+              project_id: projectId,
+              source_path: filePath,
+              target_path: imp.resolvedPath,
+              import_type: imp.importType,
+              imported_symbols: imp.symbols.length > 0 ? imp.symbols : null,
+              scan_job_id: scanJobId,
+            });
+          }
+        }
+      } catch {
+        // non-fatal: import parsing failure for this file
+      }
+    }
+
+    // Bulk upsert ALL file dependencies in one DB call
+    if (allDepRows.length > 0) {
+      // Upsert in chunks of 500 to avoid exceeding Supabase row limits
+      for (let i = 0; i < allDepRows.length; i += 500) {
+        const chunk = allDepRows.slice(i, i + 500);
+        await db.from("file_dependencies").upsert(chunk, {
           onConflict: "project_id,source_path,target_path",
         }).then(undefined, () => { /* non-fatal */ });
       }
-
-      pass1Processed = Math.min(i + 5, pass1Total);
-
-      // Log every batch so the UI always shows movement
-      await pushLog(
-        { timestamp: new Date().toISOString(), file: "", status: "scanning", message: `Indexed imports: ${pass1Processed}/${pass1Total} files` },
-        { files_total: filesTotal, files_scanned: 0, features_created: 0, entries_created: 0, errors, duration_ms: Date.now() - scanStartMs },
-      );
     }
 
     // ── Topological sort (leaves first → pages/routes last) ──────────────────
@@ -442,35 +475,31 @@ export async function runScan(
     );
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // PASS 2: AI feature extraction in dependency order (relational context)
+    // PASS 2: AI feature extraction — parallel batches in dependency order
     // ═══════════════════════════════════════════════════════════════════════════
 
     // Running map of already-extracted summaries keyed by file path
     const summaryMap = new Map<string, string>();
 
-    // Process files sequentially in dependency order
-    for (const filePath of sortedFiles) {
+    // Concurrency for AI calls — 5 parallel extractions is a good balance
+    // between speed and API rate limits. gpt-4.1-mini handles this fine.
+    const AI_CONCURRENCY = 5;
+
+    /** Process a single file through AI extraction + DB upsert */
+    async function processFileAI(filePath: string) {
       const file = fileByPath.get(filePath);
-      if (!file) continue;
+      if (!file) return;
 
       if (!validFiles.has(filePath)) {
-        // File was skipped in Pass 1 (oversized or fetch failed)
         filesProcessed++;
-        continue;
+        return;
       }
 
-      // Re-fetch content on demand to avoid holding all files in memory
-      let content: string;
-      try {
-        content = await getFileContent(githubToken, repoName, filePath);
-      } catch {
+      // Use cached content (already in memory from tarball or per-file fetch)
+      const content = contentCache.get(filePath);
+      if (!content) {
         filesProcessed++;
-        continue;
-      }
-
-      // Check if the scan was cancelled
-      if (await isCancelled()) {
-        throw new Error("Scan cancelled by user");
+        return;
       }
 
       const fileStart = Date.now();
@@ -503,7 +532,7 @@ export async function runScan(
             { timestamp: new Date().toISOString(), file: filePath, status: "skipped", elapsed_ms: Date.now() - fileStart, message: "No features extracted" },
             { files_total: filesTotal, files_scanned: filesProcessed, features_created: featuresCreated, entries_created: entriesCreated, errors, duration_ms: Date.now() - scanStartMs },
           );
-          continue;
+          return;
         }
 
         // Store summary so downstream files (pages, routes) can reference it
@@ -559,7 +588,7 @@ export async function runScan(
 
           if (featureError || !newFeature) {
             errors++;
-            continue;
+            return;
           }
           featureId = newFeature.id;
           featuresCreated++;
@@ -662,6 +691,25 @@ export async function runScan(
         );
       }
     }
+
+    // Process in topological tiers: files at the same depth can run in parallel
+    // since they don't depend on each other. This maintains import context quality
+    // while maximizing parallelism.
+    const tiers = topologicalTiers(sortedFiles, importGraph);
+
+    for (const tier of tiers) {
+      // Check cancellation between tiers
+      if (await isCancelled()) throw new Error("Scan cancelled by user");
+
+      // Process this tier's files in parallel batches of AI_CONCURRENCY
+      for (let i = 0; i < tier.length; i += AI_CONCURRENCY) {
+        const batch = tier.slice(i, i + AI_CONCURRENCY);
+        await Promise.all(batch.map(processFileAI));
+      }
+    }
+
+    // Free content cache — no longer needed
+    contentCache.clear();
 
     // ═══════════════════════════════════════════════════════════════════════════
     // FINALIZE — mark scan as done
@@ -788,6 +836,48 @@ function topologicalSort(
   }
 
   return sorted;
+}
+
+/**
+ * Group files into tiers by dependency depth. Files in the same tier have all
+ * their dependencies in earlier tiers, so they can be processed in parallel.
+ * This maximizes AI concurrency while maintaining import context quality.
+ */
+function topologicalTiers(
+  sortedFiles: string[],
+  importGraph: Map<string, string[]>,
+): string[][] {
+  const pathSet = new Set(sortedFiles);
+  const depth = new Map<string, number>();
+
+  // Compute depth: max dependency depth + 1
+  for (const path of sortedFiles) {
+    let maxDepth = -1;
+    for (const dep of importGraph.get(path) ?? []) {
+      if (pathSet.has(dep) && depth.has(dep)) {
+        maxDepth = Math.max(maxDepth, depth.get(dep)!);
+      }
+    }
+    depth.set(path, maxDepth + 1);
+  }
+
+  // Group by depth
+  const tierMap = new Map<number, string[]>();
+  for (const path of sortedFiles) {
+    const d = depth.get(path) ?? 0;
+    const tier = tierMap.get(d) ?? [];
+    tier.push(path);
+    tierMap.set(d, tier);
+  }
+
+  // Return tiers in order (depth 0 first)
+  const maxTier = Math.max(...tierMap.keys(), 0);
+  const tiers: string[][] = [];
+  for (let i = 0; i <= maxTier; i++) {
+    const tier = tierMap.get(i);
+    if (tier && tier.length > 0) tiers.push(tier);
+  }
+  return tiers;
 }
 
 function triggerQueueProcessing() {
