@@ -20,6 +20,7 @@ export const scanProjectTask = task({
   id: "scan-project",
   // 10 min — Trigger.dev allows much longer than Vercel's 800s
   maxDuration: 600,
+  machine: "large-1x",
   retry: {
     maxAttempts: 2,
     minTimeoutInMs: 2000,

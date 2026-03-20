@@ -603,6 +603,9 @@ export async function runScan(
           { timestamp: new Date().toISOString(), file: filePath, status: "error", elapsed_ms: Date.now() - fileStart, message: e instanceof Error ? e.message : "Unknown error" },
           { files_total: filesTotal, files_scanned: filesProcessed, features_created: featuresCreated, entries_created: entriesCreated, errors, duration_ms: Date.now() - scanStartMs },
         );
+      } finally {
+        // Release file content from memory after processing to reduce OOM risk
+        contentCache.delete(filePath);
       }
     }
 
