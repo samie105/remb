@@ -310,21 +310,21 @@ export async function runScan(
       { files_total: filesTotal, files_scanned: 0, features_created: 0, entries_created: 0, errors: 0, duration_ms: Date.now() - scanStartMs },
     );
 
-    // Cache file contents in memory so we only fetch each file once
-    const contentCache = new Map<string, string>();
     // Import graph: source → [targets]
     const importGraph = new Map<string, string[]>();
     // Reverse graph for fan-in counting: target → [sources]
     const reverseGraph = new Map<string, string[]>();
     // Per-file import details for passing to AI
     const fileImports = new Map<string, Array<{ path: string; symbols: string[] }>>();
+    // Track which files had valid content (not oversized or failed)
+    const validFiles = new Set<string>();
 
-    // Fetch contents in batches of 5 (higher concurrency — no AI calls here)
+    // Fetch contents in batches of 5, extract imports, then DISCARD content to save memory
     await processInBatches(queuedFiles, 5, async (file) => {
       try {
         const content = await getFileContent(githubToken, repoName, file.path);
         if (content.length > 100_000) return; // Skip oversized files
-        contentCache.set(file.path, content);
+        validFiles.add(file.path);
 
         // Extract imports (fast regex, no LLM)
         const allImports = extractImports(content, file.path, fileIndex);
@@ -382,7 +382,7 @@ export async function runScan(
     const fileByPath = new Map(queuedFiles.map((f) => [f.path, f]));
 
     await pushLog(
-      { timestamp: new Date().toISOString(), file: "", status: "done", message: `Dependency graph built: ${contentCache.size} files cached, ${importGraph.size} with imports` },
+      { timestamp: new Date().toISOString(), file: "", status: "done", message: `Dependency graph built: ${validFiles.size} files indexed, ${importGraph.size} with imports` },
       { files_total: filesTotal, files_scanned: 0, features_created: 0, entries_created: 0, errors: 0, duration_ms: Date.now() - scanStartMs },
     );
 
@@ -393,14 +393,22 @@ export async function runScan(
     // Running map of already-extracted summaries keyed by file path
     const summaryMap = new Map<string, string>();
 
-    // Process files sequentially in dependency order (batches of 3 for OpenAI)
+    // Process files sequentially in dependency order
     for (const filePath of sortedFiles) {
       const file = fileByPath.get(filePath);
       if (!file) continue;
 
-      const content = contentCache.get(filePath);
-      if (!content) {
-        // File was skipped (oversized or fetch failed)
+      if (!validFiles.has(filePath)) {
+        // File was skipped in Pass 1 (oversized or fetch failed)
+        filesProcessed++;
+        continue;
+      }
+
+      // Re-fetch content on demand to avoid holding all files in memory
+      let content: string;
+      try {
+        content = await getFileContent(githubToken, repoName, filePath);
+      } catch {
         filesProcessed++;
         continue;
       }
@@ -603,9 +611,6 @@ export async function runScan(
           { timestamp: new Date().toISOString(), file: filePath, status: "error", elapsed_ms: Date.now() - fileStart, message: e instanceof Error ? e.message : "Unknown error" },
           { files_total: filesTotal, files_scanned: filesProcessed, features_created: featuresCreated, entries_created: entriesCreated, errors, duration_ms: Date.now() - scanStartMs },
         );
-      } finally {
-        // Release file content from memory after processing to reduce OOM risk
-        contentCache.delete(filePath);
       }
     }
 
