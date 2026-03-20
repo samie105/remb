@@ -441,6 +441,9 @@ type ScanStatusResponse struct {
 	DurationMs      int             `json:"durationMs"`
 	StartedAt       *string         `json:"startedAt"`
 	FinishedAt      *string         `json:"finishedAt"`
+	Machine         *string         `json:"machine"`
+	EstimatedFiles  *int            `json:"estimatedFiles"`
+	EstimatedSizeKB *int            `json:"estimatedSizeKB"`
 }
 
 // GetScanStatus polls for scan job progress.

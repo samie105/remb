@@ -109,6 +109,7 @@ func pollScan(client *api.Client, scanID string) error {
 
 	seenFiles := make(map[string]bool)
 	lastFeature := ""
+	shownMachineInfo := false
 
 	for {
 		status, err := client.GetScanStatus(scanID)
@@ -116,6 +117,25 @@ func pollScan(client *api.Client, scanID string) error {
 			// Network hiccup — retry silently
 			time.Sleep(3 * time.Second)
 			continue
+		}
+
+		// Show machine/sizing info once
+		if !shownMachineInfo && status.Machine != nil {
+			fmt.Print("\r\033[K")
+			info := output.Bold(*status.Machine)
+			if status.EstimatedFiles != nil {
+				sizeStr := ""
+				if status.EstimatedSizeKB != nil {
+					if *status.EstimatedSizeKB >= 1024 {
+						sizeStr = fmt.Sprintf(", ~%.1fMB", float64(*status.EstimatedSizeKB)/1024)
+					} else {
+						sizeStr = fmt.Sprintf(", ~%dKB", *status.EstimatedSizeKB)
+					}
+				}
+				info += fmt.Sprintf(" (%d files%s)", *status.EstimatedFiles, sizeStr)
+			}
+			output.Info(fmt.Sprintf("Worker: %s", info))
+			shownMachineInfo = true
 		}
 
 		if status.Status == "done" {
@@ -187,6 +207,9 @@ func printScanSummary(status *api.ScanStatusResponse) {
 		output.KeyValue("Errors", fmt.Sprintf("\033[33m%d\033[0m", status.Errors))
 	}
 	output.KeyValue("Duration", formatDuration(status.DurationMs))
+	if status.Machine != nil {
+		output.KeyValue("Worker", *status.Machine)
+	}
 
 	// Show features discovered
 	features := make([]string, 0)
