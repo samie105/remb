@@ -238,7 +238,7 @@ export async function getRepoFiles(
   return { files, truncated: data.truncated ?? false, branch };
 }
 
-/** Fetch a single file's content from GitHub */
+/** Fetch a single file's content from GitHub (20s timeout to prevent hangs) */
 export async function getFileContent(
   token: string,
   repoName: string,
@@ -254,8 +254,15 @@ export async function getFileContent(
         Authorization: `Bearer ${token}`,
         Accept: "application/vnd.github.raw+json",
       },
+      signal: AbortSignal.timeout(20_000),
     }
   );
+
+  if (res.status === 403 || res.status === 429) {
+    // Rate limited — wait 5s then throw so caller can retry
+    await new Promise((r) => setTimeout(r, 5000));
+    throw new Error(`GitHub rate limited for ${path}: ${res.status}`);
+  }
 
   if (!res.ok) {
     throw new Error(`Failed to fetch file ${path}: ${res.status}`);

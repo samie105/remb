@@ -115,13 +115,15 @@ export async function runScan(
     }
   }
 
-  /** Rolling log count — we keep all logs for the final result but only send
-   *  the latest window in intermediate DB updates to avoid bloating JSONB writes. */
-  let dbFlushCounter = 0;
+  /** Cap in-memory logs to prevent unbounded growth during large scans. */
+  const MAX_IN_MEMORY_LOGS = 500;
 
   async function pushLog(entry: ScanLogEntry, partialResult: Partial<ScanResult>) {
     logs.push(entry);
-    dbFlushCounter++;
+    // Cap in-memory logs — keep recent entries
+    if (logs.length > MAX_IN_MEMORY_LOGS) {
+      logs.splice(0, logs.length - MAX_IN_MEMORY_LOGS);
+    }
     // Flush every entry during scanning (errors immediately, progress every entry)
     // Use only last 200 logs in intermediate updates to limit JSONB size
     const recentLogs = logs.length > 200 ? logs.slice(-200) : logs;
@@ -350,6 +352,16 @@ export async function runScan(
       }
 
       const batch = queuedFiles.slice(i, i + 5);
+      // Collect dependency rows for bulk upsert after the batch
+      const batchDepRows: Array<{
+        project_id: string;
+        source_path: string;
+        target_path: string;
+        import_type: string;
+        imported_symbols: string[] | null;
+        scan_job_id: string;
+      }> = [];
+
       await Promise.all(batch.map(async (file) => {
         try {
           const content = await getFileContent(githubToken, repoName, file.path);
@@ -377,39 +389,41 @@ export async function runScan(
           importGraph.set(file.path, targets);
           fileImports.set(file.path, imports);
 
-          // Upsert file dependencies to DB
-          if (internalImports.length > 0) {
-            const rows = internalImports
-              .filter((imp) => imp.resolvedPath)
-              .map((imp) => ({
+          // Collect dependency rows for bulk upsert (outside Promise.all)
+          for (const imp of internalImports) {
+            if (imp.resolvedPath) {
+              batchDepRows.push({
                 project_id: projectId,
                 source_path: file.path,
-                target_path: imp.resolvedPath!,
+                target_path: imp.resolvedPath,
                 import_type: imp.importType,
                 imported_symbols: imp.symbols.length > 0 ? imp.symbols : null,
                 scan_job_id: scanJobId,
-              }));
-
-            if (rows.length > 0) {
-              await db.from("file_dependencies").upsert(rows, {
-                onConflict: "project_id,source_path,target_path",
               });
             }
           }
-        } catch {
-          // Non-fatal: content fetch or import extraction failure
+        } catch (e) {
+          // Log the failure so it's visible instead of silently swallowing
+          const msg = e instanceof Error ? e.message : String(e);
+          logs.push({ timestamp: new Date().toISOString(), file: file.path, status: "error" as const, message: `Import index failed: ${msg}` });
+          errors++;
         }
       }));
 
+      // Bulk upsert file dependencies after each batch (single DB call, not per-file)
+      if (batchDepRows.length > 0) {
+        await db.from("file_dependencies").upsert(batchDepRows, {
+          onConflict: "project_id,source_path,target_path",
+        }).then(undefined, () => { /* non-fatal */ });
+      }
+
       pass1Processed = Math.min(i + 5, pass1Total);
 
-      // Log progress every 20 files so the UI shows movement
-      if (pass1Processed % 20 === 0 || pass1Processed === pass1Total) {
-        await pushLog(
-          { timestamp: new Date().toISOString(), file: "", status: "scanning", message: `Indexed imports: ${pass1Processed}/${pass1Total} files` },
-          { files_total: filesTotal, files_scanned: 0, features_created: 0, entries_created: 0, errors: 0, duration_ms: Date.now() - scanStartMs },
-        );
-      }
+      // Log every batch so the UI always shows movement
+      await pushLog(
+        { timestamp: new Date().toISOString(), file: "", status: "scanning", message: `Indexed imports: ${pass1Processed}/${pass1Total} files` },
+        { files_total: filesTotal, files_scanned: 0, features_created: 0, entries_created: 0, errors, duration_ms: Date.now() - scanStartMs },
+      );
     }
 
     // ── Topological sort (leaves first → pages/routes last) ──────────────────
