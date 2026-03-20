@@ -88,6 +88,9 @@ export interface ScanStatus {
   durationMs: number;
   startedAt: string | null;
   finishedAt: string | null;
+  machine: string | null;
+  estimatedFiles: number | null;
+  estimatedSizeKB: number | null;
 }
 
 export interface ConversationEntry {

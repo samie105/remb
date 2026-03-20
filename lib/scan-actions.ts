@@ -36,6 +36,12 @@ export type ScanResult = {
   error?: string;
   /** IDs of all features created or updated during this scan. Used as fallback when context_entries were not created (e.g. embedding failure). */
   feature_ids?: string[];
+  /* ── Architecture metadata (set by scan-dispatch) ── */
+  _trigger_run_id?: string;
+  _machine?: string;
+  _max_duration?: number;
+  _estimated_files?: number;
+  _estimated_size_kb?: number;
 };
 
 const STALE_SCAN_MS = 15 * 60 * 1000;

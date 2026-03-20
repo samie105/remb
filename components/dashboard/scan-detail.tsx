@@ -196,6 +196,9 @@ export function ScanDetail({ scanJobId, projectSlug, onBack }: ScanDetailProps) 
   const isRunning = job.status === "running" || job.status === "queued";
   const isFailed = job.status === "failed";
   const scanError = result?.error;
+  const machine = result?._machine ?? null;
+  const estimatedFiles = result?._estimated_files ?? null;
+  const estimatedSizeKB = result?._estimated_size_kb ?? null;
   const duration = result?.duration_ms ?? (
     job.started_at && job.finished_at
       ? new Date(job.finished_at).getTime() - new Date(job.started_at).getTime()
@@ -250,6 +253,25 @@ export function ScanDetail({ scanJobId, projectSlug, onBack }: ScanDetailProps) 
           )}
         </div>
       </motion.div>
+
+      {/* ─── Machine / Sizing info ─── */}
+      {machine && (
+        <motion.div variants={item} className="flex flex-wrap items-center gap-2">
+          <Badge variant="outline" className="h-5 text-[10px] px-2 gap-1 border-border/40 font-mono">
+            {machine}
+          </Badge>
+          {estimatedFiles != null && (
+            <Badge variant="outline" className="h-5 text-[10px] px-2 gap-1 border-border/40 font-mono">
+              {estimatedFiles} files
+            </Badge>
+          )}
+          {estimatedSizeKB != null && (
+            <Badge variant="outline" className="h-5 text-[10px] px-2 gap-1 border-border/40 font-mono">
+              ~{estimatedSizeKB >= 1024 ? `${(estimatedSizeKB / 1024).toFixed(1)}MB` : `${estimatedSizeKB}KB`}
+            </Badge>
+          )}
+        </motion.div>
+      )}
 
       {/* ─── Error banner ─── */}
       {isFailed && scanError && (

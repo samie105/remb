@@ -86,11 +86,20 @@ async function pollScan(
 
   const seenFiles = new Set<string>();
   let lastFeature = "";
+  let shownMachineInfo = false;
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
     try {
       const status = await client.getScanStatus(scanId);
+
+      // Show machine/sizing info once
+      if (!shownMachineInfo && status.machine) {
+        spinner.stop();
+        info(`Worker: ${chalk.bold(status.machine)}${status.estimatedFiles ? ` (${status.estimatedFiles} files` + (status.estimatedSizeKB ? `, ~${status.estimatedSizeKB >= 1024 ? (status.estimatedSizeKB / 1024).toFixed(1) + "MB" : status.estimatedSizeKB + "KB"}` : "}") + ")" : ""}`);
+        spinner.start();
+        shownMachineInfo = true;
+      }
 
       if (status.status === "done") {
         spinner.stop();
@@ -151,6 +160,7 @@ function printScanSummary(status: {
   featuresCreated: number;
   errors: number;
   durationMs: number;
+  machine?: string | null;
   logs?: Array<{ file: string; status: string; feature?: string }>;
 }) {
   console.log();
@@ -162,6 +172,9 @@ function printScanSummary(status: {
     keyValue("  Errors", chalk.yellow(String(status.errors)));
   }
   keyValue("  Duration", formatDuration(status.durationMs));
+  if (status.machine) {
+    keyValue("  Worker", status.machine);
+  }
 
   // Show features discovered
   const features = new Set<string>();

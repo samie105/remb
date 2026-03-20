@@ -403,6 +403,9 @@ export function createApiClient(opts: ClientOptions = {}) {
         durationMs: number;
         startedAt: string | null;
         finishedAt: string | null;
+        machine: string | null;
+        estimatedFiles: number | null;
+        estimatedSizeKB: number | null;
       }>("GET", "/api/cli/scan", undefined, { scanId });
     },
 

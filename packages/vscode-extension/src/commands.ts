@@ -160,6 +160,9 @@ export function registerCommands(
 
   // ── Trigger scan ──────────────────────────────────────────
 
+  const scanOutput = vscode.window.createOutputChannel("Remb Scan");
+  context.subscriptions.push(scanOutput);
+
   context.subscriptions.push(
     vscode.commands.registerCommand("remb.triggerScan", async () => {
       const slug = workspace.projectSlug;
@@ -169,10 +172,22 @@ export function registerCommands(
       }
       try {
         const result = await api.triggerScan(slug);
-        if (result.status === "started") {
-          vscode.window.showInformationMessage(`Scan started for "${slug}". Check progress in the dashboard.`);
+        if (result.status === "up_to_date") {
+          vscode.window.showInformationMessage(result.message);
+          return;
+        }
+        if (result.status === "already_running") {
+          vscode.window.showInformationMessage(result.message);
+          if (result.scanId) {
+            pollScanProgress(api, result.scanId, scanOutput);
+          }
+          return;
+        }
+        if (result.status === "started" && result.scanId) {
+          vscode.window.showInformationMessage(`Scan started for "${slug}".`);
+          pollScanProgress(api, result.scanId, scanOutput);
         } else {
-          vscode.window.showInformationMessage(`${result.status}: ${result.message}`);
+          vscode.window.showInformationMessage(result.message);
         }
       } catch (err) {
         vscode.window.showErrorMessage(formatCommandError("trigger scan", err));
@@ -308,4 +323,63 @@ function formatCommandError(action: string, err: unknown): string {
     return `Failed to ${action}: ${err.message}`;
   }
   return `Failed to ${action}: ${err instanceof Error ? err.message : String(err)}`;
+}
+
+/** Poll scan progress and write to an output channel. */
+async function pollScanProgress(
+  api: ApiClient,
+  scanId: string,
+  output: vscode.OutputChannel,
+) {
+  output.clear();
+  output.show(true);
+  output.appendLine(`[scan] Polling scan ${scanId}...`);
+
+  const seenLogs = new Set<string>();
+
+  const poll = async () => {
+    try {
+      const status = await api.getScanStatus(scanId);
+
+      // Print new log entries
+      for (const log of status.logs ?? []) {
+        const key = `${log.timestamp}:${log.file}:${log.status}`;
+        if (seenLogs.has(key)) continue;
+        seenLogs.add(key);
+        const sym = log.status === "done" ? "\u2713" : log.status === "error" ? "\u2717" : "\u25CF";
+        const msg = log.feature ? `\u2192 ${log.feature}` : log.message ?? "";
+        output.appendLine(`  ${sym} ${log.file ? log.file + " " : ""}${msg}`);
+      }
+
+      if (status.status === "done") {
+        output.appendLine("");
+        output.appendLine(`[scan] Complete \u2014 ${status.filesScanned}/${status.filesTotal} files, ${status.featuresCreated} features, ${formatDurationMs(status.durationMs)}`);
+        vscode.window.showInformationMessage(`Scan complete: ${status.featuresCreated} features found.`);
+        return;
+      }
+
+      if (status.status === "failed") {
+        output.appendLine("");
+        output.appendLine(`[scan] Failed.`);
+        vscode.window.showErrorMessage("Scan failed. Check the output channel for details.");
+        return;
+      }
+
+      // Continue polling
+      setTimeout(poll, 3000);
+    } catch {
+      // Network error — retry
+      setTimeout(poll, 5000);
+    }
+  };
+
+  setTimeout(poll, 2000);
+}
+
+function formatDurationMs(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  return `${m}m ${s % 60}s`;
 }

@@ -61,6 +61,10 @@ export async function GET(request: Request) {
     durationMs: (result.duration_ms as number) ?? 0,
     startedAt: job.started_at,
     finishedAt: job.finished_at,
+    // Architecture metadata
+    machine: (result._machine as string) ?? null,
+    estimatedFiles: (result._estimated_files as number) ?? null,
+    estimatedSizeKB: (result._estimated_size_kb as number) ?? null,
   });
 }
 
