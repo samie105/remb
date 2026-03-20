@@ -150,3 +150,4 @@ export async function GET(request: NextRequest) {
   }
 
   return NextResponse.json({ files: fileContextMap, dependencies: fileDeps, conversations: fileConversations });
+}
