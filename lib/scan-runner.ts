@@ -123,6 +123,14 @@ export async function runScan(
   }
 
   try {
+    // ── Fail-fast: validate required env vars before any work ──────────────
+    if (!process.env.OPENAI_API_KEY) {
+      throw new Error(
+        "OPENAI_API_KEY is not set. Cannot extract features without an OpenAI API key. " +
+        "Add it to your Vercel environment variables."
+      );
+    }
+
     if (chunkOffset === 0) {
       // ══════════════════════════════════════════════════════════════════════════
       // INITIAL CALL — fetch file tree, build smart-scan filter, store queue
@@ -671,9 +679,32 @@ function chainNextChunk(
       Authorization: `Bearer ${secret}`,
     },
     body: JSON.stringify({ scanJobId, projectId, repoName, branch, githubToken, chunkOffset }),
-  }).catch((err) => {
-    console.error(`[scan-runner] Failed to chain chunk at offset ${chunkOffset}:`, err);
-  });
+  })
+    .then(async (res) => {
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        console.error(`[scan-runner] Chunk dispatch returned ${res.status} at offset ${chunkOffset}: ${body.slice(0, 200)}`);
+        // Mark scan as failed so it doesn't hang forever
+        const db = createAdminClient();
+        await db.from("scan_jobs").update({
+          status: "failed",
+          finished_at: new Date().toISOString(),
+          result: { error: `Chunk dispatch failed at offset ${chunkOffset}: HTTP ${res.status}` },
+        }).eq("id", scanJobId).then(undefined, () => {});
+        await db.from("projects").update({ status: "active" }).eq("id", projectId).then(undefined, () => {});
+      }
+    })
+    .catch(async (err) => {
+      console.error(`[scan-runner] Failed to chain chunk at offset ${chunkOffset}:`, err);
+      // Mark scan as failed so it doesn't hang forever
+      const db = createAdminClient();
+      await db.from("scan_jobs").update({
+        status: "failed",
+        finished_at: new Date().toISOString(),
+        result: { error: `Chunk chain failed at offset ${chunkOffset}: ${String(err)}` },
+      }).eq("id", scanJobId).then(undefined, () => {});
+      await db.from("projects").update({ status: "active" }).eq("id", projectId).then(undefined, () => {});
+    });
 }
 
 function triggerQueueProcessing() {

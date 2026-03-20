@@ -218,17 +218,37 @@ export async function createScanJob(
     return job;
   }
 
+  // Validate required env vars before dispatching
+  const workerSecret = process.env.SCAN_WORKER_SECRET?.trim();
+  if (!workerSecret) {
+    await db.from("scan_jobs").update({
+      status: "failed",
+      finished_at: new Date().toISOString(),
+      result: { error: "SCAN_WORKER_SECRET is not configured on the server." },
+    }).eq("id", job.id);
+    await db.from("projects").update({ status: "active" }).eq("id", projectId);
+    throw new Error("Server misconfiguration: scan worker secret not set. Contact support.");
+  }
+
+  if (!process.env.OPENAI_API_KEY) {
+    await db.from("scan_jobs").update({
+      status: "failed",
+      finished_at: new Date().toISOString(),
+      result: { error: "OPENAI_API_KEY is not configured on the server." },
+    }).eq("id", job.id);
+    await db.from("projects").update({ status: "active" }).eq("id", projectId);
+    throw new Error("Server misconfiguration: OpenAI API key not set. Contact support.");
+  }
+
   // Dispatch to the dedicated long-running API route.
-  // We fire-and-forget the fetch — the route runs independently with its
-  // own serverless function timeout (maxDuration = 300s) so it won't be
-  // killed when this Server Action returns.
+  // Check the response status to catch auth/routing failures instead of pure fire-and-forget.
   const appUrl = getInternalApiUrl();
 
   fetch(`${appUrl}/api/scan/run`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${process.env.SCAN_WORKER_SECRET?.trim()}`,
+      Authorization: `Bearer ${workerSecret}`,
     },
     body: JSON.stringify({
       scanJobId: job.id,
@@ -237,19 +257,30 @@ export async function createScanJob(
       branch: project.branch ?? "main",
       githubToken,
     }),
-  }).catch((err) => {
-    // If the fetch itself fails (e.g. network error at startup), mark the job failed.
-    console.error("[createScanJob] Failed to dispatch scan worker:", err);
-    createAdminClient()
-      .from("scan_jobs")
-      .update({
+  })
+    .then(async (res) => {
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        console.error(`[createScanJob] Worker dispatch returned ${res.status}: ${body.slice(0, 300)}`);
+        const adminDb = createAdminClient();
+        await adminDb.from("scan_jobs").update({
+          status: "failed",
+          finished_at: new Date().toISOString(),
+          result: { error: `Scan worker rejected: HTTP ${res.status} — ${body.slice(0, 200)}` },
+        }).eq("id", job.id).then(undefined, () => {});
+        await adminDb.from("projects").update({ status: "active" }).eq("id", projectId).then(undefined, () => {});
+      }
+    })
+    .catch(async (err) => {
+      console.error("[createScanJob] Failed to dispatch scan worker:", err);
+      const adminDb = createAdminClient();
+      await adminDb.from("scan_jobs").update({
         status: "failed",
         finished_at: new Date().toISOString(),
         result: { error: "Failed to start scan worker: " + String(err) },
-      })
-      .eq("id", job.id)
-      .then(undefined, () => {});
-  });
+      }).eq("id", job.id).then(undefined, () => {});
+      await adminDb.from("projects").update({ status: "active" }).eq("id", projectId).then(undefined, () => {});
+    });
 
   return job;
 }
