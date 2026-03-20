@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { authenticateCliRequest } from "@/lib/cli-auth";
 import { createAdminClient } from "@/lib/supabase/server";
 import { getLatestCommitSha } from "@/lib/github-reader";
-import { getInternalApiUrl, getInternalFetchHeaders } from "@/lib/utils";
 
 /**
  * GET /api/cli/scan?scanId=<uuid>
@@ -219,46 +218,24 @@ export async function POST(request: Request) {
     );
   }
 
-  // Dispatch to scan worker — check response status to catch auth/routing failures
-  const appUrl = getInternalApiUrl();
-
-  fetch(`${appUrl}/api/scan/run`, {
-    method: "POST",
-    headers: getInternalFetchHeaders({
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${workerSecret}`,
-    }),
-    body: JSON.stringify({
-      scanJobId: job.id,
-      projectId: project.id,
-      repoName: project.repo_name,
-      branch: project.branch ?? "main",
-      githubToken: userData.github_token,
-    }),
-  })
-    .then(async (res) => {
-      if (!res.ok) {
-        const body = await res.text().catch(() => "");
-        console.error(`[cli/scan] Worker dispatch returned ${res.status}: ${body.slice(0, 300)}`);
-        const adminDb = createAdminClient();
-        await adminDb.from("scan_jobs").update({
-          status: "failed",
-          finished_at: new Date().toISOString(),
-          result: { error: `Scan worker rejected request: HTTP ${res.status} — ${body.slice(0, 200)}` },
-        }).eq("id", job.id).then(undefined, () => {});
-        await adminDb.from("projects").update({ status: "active" }).eq("id", project.id).then(undefined, () => {});
-      }
-    })
-    .catch(async (err) => {
-      console.error("[cli/scan] Failed to dispatch scan worker:", err);
-      const adminDb = createAdminClient();
-      await adminDb.from("scan_jobs").update({
-        status: "failed",
-        finished_at: new Date().toISOString(),
-        result: { error: "Failed to start scan worker: " + String(err) },
-      }).eq("id", job.id).then(undefined, () => {});
-      await adminDb.from("projects").update({ status: "active" }).eq("id", project.id).then(undefined, () => {});
-    });
+  // Dispatch via Trigger.dev (or HTTP fallback for local dev)
+  const { dispatchScan } = await import("@/lib/scan-dispatch");
+  dispatchScan({
+    scanJobId: job.id,
+    projectId: project.id,
+    repoName: project.repo_name,
+    branch: project.branch ?? "main",
+    githubToken: userData.github_token,
+  }).catch(async (err) => {
+    console.error("[cli/scan] Scan dispatch failed:", err);
+    const adminDb = createAdminClient();
+    await adminDb.from("scan_jobs").update({
+      status: "failed",
+      finished_at: new Date().toISOString(),
+      result: { error: "Failed to start scan: " + String(err) },
+    }).eq("id", job.id).then(undefined, () => {});
+    await adminDb.from("projects").update({ status: "active" }).eq("id", project.id).then(undefined, () => {});
+  });
 
   return NextResponse.json({
     scanId: job.id,

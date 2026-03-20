@@ -240,47 +240,24 @@ export async function createScanJob(
     throw new Error("Server misconfiguration: OpenAI API key not set. Contact support.");
   }
 
-  // Dispatch to the dedicated long-running API route.
-  // Check the response status to catch auth/routing failures instead of pure fire-and-forget.
-  const appUrl = getInternalApiUrl();
-
-  fetch(`${appUrl}/api/scan/run`, {
-    method: "POST",
-    headers: getInternalFetchHeaders({
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${workerSecret}`,
-    }),
-    body: JSON.stringify({
-      scanJobId: job.id,
-      projectId,
-      repoName: project.repo_name,
-      branch: project.branch ?? "main",
-      githubToken,
-    }),
-  })
-    .then(async (res) => {
-      if (!res.ok) {
-        const body = await res.text().catch(() => "");
-        console.error(`[createScanJob] Worker dispatch returned ${res.status}: ${body.slice(0, 300)}`);
-        const adminDb = createAdminClient();
-        await adminDb.from("scan_jobs").update({
-          status: "failed",
-          finished_at: new Date().toISOString(),
-          result: { error: `Scan worker rejected: HTTP ${res.status} — ${body.slice(0, 200)}` },
-        }).eq("id", job.id).then(undefined, () => {});
-        await adminDb.from("projects").update({ status: "active" }).eq("id", projectId).then(undefined, () => {});
-      }
-    })
-    .catch(async (err) => {
-      console.error("[createScanJob] Failed to dispatch scan worker:", err);
-      const adminDb = createAdminClient();
-      await adminDb.from("scan_jobs").update({
-        status: "failed",
-        finished_at: new Date().toISOString(),
-        result: { error: "Failed to start scan worker: " + String(err) },
-      }).eq("id", job.id).then(undefined, () => {});
-      await adminDb.from("projects").update({ status: "active" }).eq("id", projectId).then(undefined, () => {});
-    });
+  // Dispatch via Trigger.dev (or HTTP fallback for local dev)
+  const { dispatchScan } = await import("@/lib/scan-dispatch");
+  dispatchScan({
+    scanJobId: job.id,
+    projectId,
+    repoName: project.repo_name,
+    branch: project.branch ?? "main",
+    githubToken,
+  }).catch(async (err) => {
+    console.error("[createScanJob] Scan dispatch failed:", err);
+    const adminDb = createAdminClient();
+    await adminDb.from("scan_jobs").update({
+      status: "failed",
+      finished_at: new Date().toISOString(),
+      result: { error: "Failed to start scan: " + String(err) },
+    }).eq("id", job.id).then(undefined, () => {});
+    await adminDb.from("projects").update({ status: "active" }).eq("id", projectId).then(undefined, () => {});
+  });
 
   return job;
 }

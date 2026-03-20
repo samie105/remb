@@ -15,6 +15,12 @@ function getOpenAIClient(): OpenAI {
 
 /* ─── types ─── */
 
+export interface ImportContext {
+  path: string;
+  summary: string;
+  symbols: string[];
+}
+
 export interface ExtractedFeature {
   feature_name: string;
   summary: string;
@@ -56,7 +62,8 @@ Return ONLY valid JSON. No preamble.`;
 
 export async function extractFeaturesFromFile(
   content: string,
-  filename: string
+  filename: string,
+  importContext?: ImportContext[],
 ): Promise<ExtractedFeature | null> {
   const openai = getOpenAIClient();
 
@@ -66,13 +73,27 @@ export async function extractFeaturesFromFile(
     ? content.slice(0, maxChars) + "\n// ... truncated"
     : content;
 
+  // Build user message with optional relational context
+  let userMessage = `File: ${filename}\n\n`;
+
+  if (importContext && importContext.length > 0) {
+    userMessage += "This file imports the following modules (already analyzed):\n";
+    for (const imp of importContext.slice(0, 15)) {
+      const syms = imp.symbols.length > 0 ? ` (uses: ${imp.symbols.join(", ")})` : "";
+      userMessage += `- ${imp.path}${syms}: ${imp.summary}\n`;
+    }
+    userMessage += "\nUse this context to understand how this file fits into the larger system.\n\n";
+  }
+
+  userMessage += `Code:\n${truncated}`;
+
   const response = await openai.chat.completions.create({
     model: process.env.OPENAI_EXTRACT_MODEL ?? "gpt-4.1-mini",
     temperature: 0.2,
     response_format: { type: "json_object" },
     messages: [
       { role: "system", content: SCANNING_PROMPT },
-      { role: "user", content: `File: ${filename}\n\nCode:\n${truncated}` },
+      { role: "user", content: userMessage },
     ],
   });
 

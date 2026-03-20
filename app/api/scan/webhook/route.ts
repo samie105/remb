@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
-import { getInternalApiUrl, getInternalFetchHeaders } from "@/lib/utils";
-import { runScan } from "@/lib/scan-runner";
 import { timingSafeEqual, createHmac } from "node:crypto";
 
 export const maxDuration = 300;
@@ -121,30 +119,22 @@ export async function POST(request: NextRequest) {
       continue;
     }
 
-    // Dispatch scan worker (fire-and-forget)
-    const appUrl = getInternalApiUrl();
-
-    fetch(`${appUrl}/api/scan/run`, {
-      method: "POST",
-      headers: getInternalFetchHeaders({
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.SCAN_WORKER_SECRET?.trim()}`,
-      }),
-      body: JSON.stringify({
-        scanJobId: job.id,
-        projectId: project.id,
-        repoName: project.repo_name,
-        branch: project.branch ?? "main",
-        githubToken: user.github_token,
-      }),
+    // Dispatch via Trigger.dev (or HTTP fallback for local dev)
+    const { dispatchScan } = await import("@/lib/scan-dispatch");
+    dispatchScan({
+      scanJobId: job.id,
+      projectId: project.id,
+      repoName: project.repo_name ?? project.id,
+      branch: project.branch ?? "main",
+      githubToken: user.github_token,
     }).catch((err) => {
-      console.error("[webhook] Failed to dispatch scan worker:", err);
+      console.error("[webhook] Scan dispatch failed:", err);
       createAdminClient()
         .from("scan_jobs")
         .update({
           status: "failed",
           finished_at: new Date().toISOString(),
-          result: { error: "Failed to start scan worker: " + String(err) },
+          result: { error: "Failed to start scan: " + String(err) },
         })
         .eq("id", job.id)
         .then(undefined, () => {});

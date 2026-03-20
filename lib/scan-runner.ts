@@ -19,6 +19,7 @@ import {
   processInBatches,
 } from "@/lib/github-reader";
 import { extractFeaturesFromFile, generateEmbedding } from "@/lib/openai";
+import type { ImportContext } from "@/lib/openai";
 import { extractImports, getInternalImports } from "@/lib/import-parser";
 import type { ScanLogEntry, ScanResult } from "@/lib/scan-actions";
 
@@ -301,12 +302,110 @@ export async function runScan(
       .eq("id", scanJobId);
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // FILE PROCESSING — process all queued files in a single invocation
+    // PASS 1: Fetch file contents + build dependency graph (no AI cost)
     // ═══════════════════════════════════════════════════════════════════════════
 
-    // Process files in batches of 3 (low concurrency avoids OpenAI rate limits)
-    await processInBatches(queuedFiles, 3, async (file) => {
-      // Check if the scan was cancelled between batches
+    await pushLog(
+      { timestamp: new Date().toISOString(), file: "", status: "scanning", message: "Fetching file contents and building dependency graph..." },
+      { files_total: filesTotal, files_scanned: 0, features_created: 0, entries_created: 0, errors: 0, duration_ms: Date.now() - scanStartMs },
+    );
+
+    // Cache file contents in memory so we only fetch each file once
+    const contentCache = new Map<string, string>();
+    // Import graph: source → [targets]
+    const importGraph = new Map<string, string[]>();
+    // Reverse graph for fan-in counting: target → [sources]
+    const reverseGraph = new Map<string, string[]>();
+    // Per-file import details for passing to AI
+    const fileImports = new Map<string, Array<{ path: string; symbols: string[] }>>();
+
+    // Fetch contents in batches of 5 (higher concurrency — no AI calls here)
+    await processInBatches(queuedFiles, 5, async (file) => {
+      try {
+        const content = await getFileContent(githubToken, repoName, file.path);
+        if (content.length > 100_000) return; // Skip oversized files
+        contentCache.set(file.path, content);
+
+        // Extract imports (fast regex, no LLM)
+        const allImports = extractImports(content, file.path, fileIndex);
+        const internalImports = getInternalImports(allImports);
+
+        const targets: string[] = [];
+        const imports: Array<{ path: string; symbols: string[] }> = [];
+
+        for (const imp of internalImports) {
+          if (imp.resolvedPath) {
+            targets.push(imp.resolvedPath);
+            imports.push({ path: imp.resolvedPath, symbols: imp.symbols });
+            // Build reverse graph
+            const rev = reverseGraph.get(imp.resolvedPath) ?? [];
+            rev.push(file.path);
+            reverseGraph.set(imp.resolvedPath, rev);
+          }
+        }
+
+        importGraph.set(file.path, targets);
+        fileImports.set(file.path, imports);
+
+        // Upsert file dependencies to DB
+        if (internalImports.length > 0) {
+          const rows = internalImports
+            .filter((imp) => imp.resolvedPath)
+            .map((imp) => ({
+              project_id: projectId,
+              source_path: file.path,
+              target_path: imp.resolvedPath!,
+              import_type: imp.importType,
+              imported_symbols: imp.symbols.length > 0 ? imp.symbols : null,
+              scan_job_id: scanJobId,
+            }));
+
+          if (rows.length > 0) {
+            await db.from("file_dependencies").upsert(rows, {
+              onConflict: "project_id,source_path,target_path",
+            });
+          }
+        }
+      } catch {
+        // Non-fatal: content fetch or import extraction failure
+      }
+    });
+
+    // ── Topological sort (leaves first → pages/routes last) ──────────────────
+    // Kahn's algorithm with cycle handling
+    const sortedFiles = topologicalSort(
+      queuedFiles.map((f) => f.path),
+      importGraph,
+    );
+
+    // Map path back to file object (path + sha)
+    const fileByPath = new Map(queuedFiles.map((f) => [f.path, f]));
+
+    await pushLog(
+      { timestamp: new Date().toISOString(), file: "", status: "done", message: `Dependency graph built: ${contentCache.size} files cached, ${importGraph.size} with imports` },
+      { files_total: filesTotal, files_scanned: 0, features_created: 0, entries_created: 0, errors: 0, duration_ms: Date.now() - scanStartMs },
+    );
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // PASS 2: AI feature extraction in dependency order (relational context)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    // Running map of already-extracted summaries keyed by file path
+    const summaryMap = new Map<string, string>();
+
+    // Process files sequentially in dependency order (batches of 3 for OpenAI)
+    for (const filePath of sortedFiles) {
+      const file = fileByPath.get(filePath);
+      if (!file) continue;
+
+      const content = contentCache.get(filePath);
+      if (!content) {
+        // File was skipped (oversized or fetch failed)
+        filesProcessed++;
+        continue;
+      }
+
+      // Check if the scan was cancelled
       const { data: jobCheck } = await db
         .from("scan_jobs")
         .select("status")
@@ -320,57 +419,43 @@ export async function runScan(
       const fileStart = Date.now();
       try {
         await pushLog(
-          { timestamp: new Date().toISOString(), file: file.path, status: "scanning", message: `Analyzing ${file.path}` },
+          { timestamp: new Date().toISOString(), file: filePath, status: "scanning", message: `Analyzing ${filePath}` },
           { files_total: filesTotal, files_scanned: filesProcessed, features_created: featuresCreated, entries_created: entriesCreated, errors, duration_ms: Date.now() - scanStartMs },
         );
 
-        const content = await getFileContent(githubToken, repoName, file.path);
-
-        // Skip files larger than 100 KB — they cost too much to process via AI
-        // and rarely yield better features than smaller files.
-        if (content.length > 100_000) {
-          filesProcessed++;
-          await pushLog(
-            { timestamp: new Date().toISOString(), file: file.path, status: "skipped", elapsed_ms: Date.now() - fileStart, message: `Skipped: file too large (${Math.round(content.length / 1024)} KB)` },
-            { files_total: filesTotal, files_scanned: filesProcessed, features_created: featuresCreated, entries_created: entriesCreated, errors, duration_ms: Date.now() - scanStartMs },
-          );
-          return;
-        }
-
-        // ── Extract imports (fast regex — no LLM cost) ──────────────────────
-        try {
-          const allImports = extractImports(content, file.path, fileIndex);
-          const internalImports = getInternalImports(allImports);
-
-          if (internalImports.length > 0) {
-            // Upsert file dependencies — ON CONFLICT updates symbols + type
-            const rows = internalImports.map((imp) => ({
-              project_id: projectId,
-              source_path: file.path,
-              target_path: imp.resolvedPath!,
-              import_type: imp.importType,
-              imported_symbols: imp.symbols.length > 0 ? imp.symbols : null,
-              scan_job_id: scanJobId,
-            }));
-
-            await db.from("file_dependencies").upsert(rows, {
-              onConflict: "project_id,source_path,target_path",
-            });
+        // Build import context from already-processed dependencies
+        const imports = fileImports.get(filePath) ?? [];
+        const importCtx: ImportContext[] = [];
+        for (const imp of imports) {
+          const summary = summaryMap.get(imp.path);
+          if (summary) {
+            importCtx.push({ path: imp.path, summary, symbols: imp.symbols });
           }
-        } catch {
-          // Non-fatal: import extraction failure shouldn't block the scan
         }
 
-        const extracted = await withRetry(() => extractFeaturesFromFile(content, file.path));
+        // Fan-in: how many files import this one → importance signal for AI
+        const fanIn = reverseGraph.get(filePath)?.length ?? 0;
+
+        const extracted = await withRetry(() =>
+          extractFeaturesFromFile(content, filePath, importCtx.length > 0 ? importCtx : undefined)
+        );
 
         if (!extracted) {
           filesProcessed++;
           await pushLog(
-            { timestamp: new Date().toISOString(), file: file.path, status: "skipped", elapsed_ms: Date.now() - fileStart, message: "No features extracted" },
+            { timestamp: new Date().toISOString(), file: filePath, status: "skipped", elapsed_ms: Date.now() - fileStart, message: "No features extracted" },
             { files_total: filesTotal, files_scanned: filesProcessed, features_created: featuresCreated, entries_created: entriesCreated, errors, duration_ms: Date.now() - scanStartMs },
           );
-          return;
+          continue;
         }
+
+        // Store summary so downstream files (pages, routes) can reference it
+        summaryMap.set(filePath, extracted.summary);
+
+        // Boost importance for heavily-imported files
+        let adjustedImportance = extracted.importance;
+        if (fanIn >= 10) adjustedImportance = Math.min(10, adjustedImportance + 2);
+        else if (fanIn >= 5) adjustedImportance = Math.min(10, adjustedImportance + 1);
 
         // Enrich tech stack from dependency names
         for (const dep of extracted.dependencies) {
@@ -417,7 +502,7 @@ export async function runScan(
 
           if (featureError || !newFeature) {
             errors++;
-            return;
+            continue;
           }
           featureId = newFeature.id;
           featuresCreated++;
@@ -428,7 +513,7 @@ export async function runScan(
         const contextContent = JSON.stringify({
           summary: extracted.summary,
           category: extracted.category,
-          importance: extracted.importance,
+          importance: adjustedImportance,
           key_decisions: extracted.key_decisions,
           dependencies: extracted.dependencies,
           gotchas: extracted.gotchas,
@@ -459,7 +544,7 @@ export async function runScan(
             if (rows?.[0]?.id) {
               const existingMeta = rows[0].metadata;
               // Only dedup if it's the same file path
-              if (existingMeta?.file_path === file.path) {
+              if (existingMeta?.file_path === filePath) {
                 dedupedEntryId = rows[0].id;
               }
             }
@@ -468,20 +553,24 @@ export async function runScan(
           }
         }
 
+        const entryMetadata = {
+          file_path: filePath,
+          file_sha: file.sha,
+          scan_job_id: scanJobId,
+          feature_name: extracted.feature_name,
+          category: extracted.category,
+          importance: adjustedImportance,
+          tags: extracted.tags,
+          dependencies: extracted.dependencies,
+          fan_in: fanIn,
+          imports: imports.map((i) => i.path).slice(0, 20),
+        };
+
         if (dedupedEntryId) {
           // Update existing entry with new content + SHA — no duplicate created
           await db.from("context_entries").update({
             content: contextContent,
-            metadata: {
-              file_path: file.path,
-              file_sha: file.sha,
-              scan_job_id: scanJobId,
-              feature_name: extracted.feature_name,
-              category: extracted.category,
-              importance: extracted.importance,
-              tags: extracted.tags,
-              dependencies: extracted.dependencies,
-            },
+            metadata: entryMetadata,
             ...(embedding ? { embedding: `[${embedding.join(",")}]` } : {}),
           }).eq("id", dedupedEntryId);
           entriesCreated++;
@@ -491,16 +580,7 @@ export async function runScan(
             content: contextContent,
             entry_type: "scan",
             source: "worker",
-            metadata: {
-              file_path: file.path,
-              file_sha: file.sha,
-              scan_job_id: scanJobId,
-              feature_name: extracted.feature_name,
-              category: extracted.category,
-              importance: extracted.importance,
-              tags: extracted.tags,
-              dependencies: extracted.dependencies,
-            },
+            metadata: entryMetadata,
             ...(embedding ? { embedding: `[${embedding.join(",")}]` } : {}),
           });
 
@@ -513,18 +593,18 @@ export async function runScan(
 
         filesProcessed++;
         await pushLog(
-          { timestamp: new Date().toISOString(), file: file.path, status: "done", feature: extracted.feature_name, elapsed_ms: Date.now() - fileStart, message: `Extracted: ${extracted.feature_name}` },
+          { timestamp: new Date().toISOString(), file: filePath, status: "done", feature: extracted.feature_name, elapsed_ms: Date.now() - fileStart, message: `Extracted: ${extracted.feature_name}${fanIn > 0 ? ` (imported by ${fanIn} files)` : ""}` },
           { files_total: filesTotal, files_scanned: filesProcessed, features_created: featuresCreated, entries_created: entriesCreated, errors, duration_ms: Date.now() - scanStartMs },
         );
       } catch (e) {
         errors++;
         filesProcessed++;
         await pushLog(
-          { timestamp: new Date().toISOString(), file: file.path, status: "error", elapsed_ms: Date.now() - fileStart, message: e instanceof Error ? e.message : "Unknown error" },
+          { timestamp: new Date().toISOString(), file: filePath, status: "error", elapsed_ms: Date.now() - fileStart, message: e instanceof Error ? e.message : "Unknown error" },
           { files_total: filesTotal, files_scanned: filesProcessed, features_created: featuresCreated, entries_created: entriesCreated, errors, duration_ms: Date.now() - scanStartMs },
         );
       }
-    });
+    }
 
     // ═══════════════════════════════════════════════════════════════════════════
     // FINALIZE — mark scan as done
@@ -584,6 +664,63 @@ export async function runScan(
 
     throw err;
   }
+}
+
+/**
+ * Topological sort using Kahn's algorithm.
+ * Returns files in dependency order (leaves/utilities first → pages/routes last).
+ * Files in cycles are appended at the end (processed without full import context).
+ */
+function topologicalSort(
+  filePaths: string[],
+  importGraph: Map<string, string[]>,
+): string[] {
+  const pathSet = new Set(filePaths);
+  // In-degree: how many dependencies does this file have (within the scan set)
+  const inDegree = new Map<string, number>();
+  // Reverse adjacency: target → [sources that depend on it]
+  const dependents = new Map<string, string[]>();
+
+  for (const path of filePaths) {
+    inDegree.set(path, 0);
+  }
+
+  for (const path of filePaths) {
+    const deps = importGraph.get(path) ?? [];
+    for (const dep of deps) {
+      if (pathSet.has(dep)) {
+        inDegree.set(path, (inDegree.get(path) ?? 0) + 1);
+        const rev = dependents.get(dep) ?? [];
+        rev.push(path);
+        dependents.set(dep, rev);
+      }
+    }
+  }
+
+  // Start with leaf nodes (files that depend on nothing in the scan set)
+  const queue: string[] = [];
+  for (const [path, degree] of inDegree) {
+    if (degree === 0) queue.push(path);
+  }
+
+  const sorted: string[] = [];
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    sorted.push(current);
+
+    for (const dependent of dependents.get(current) ?? []) {
+      const newDegree = (inDegree.get(dependent) ?? 1) - 1;
+      inDegree.set(dependent, newDegree);
+      if (newDegree === 0) queue.push(dependent);
+    }
+  }
+
+  // Any remaining files are in cycles — append them at the end
+  for (const path of filePaths) {
+    if (!sorted.includes(path)) sorted.push(path);
+  }
+
+  return sorted;
 }
 
 function triggerQueueProcessing() {

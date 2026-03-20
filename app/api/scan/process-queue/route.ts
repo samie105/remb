@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
-import { getInternalApiUrl, getInternalFetchHeaders } from "@/lib/utils";
 
 /**
  * POST /api/scan/process-queue
@@ -63,8 +62,6 @@ export async function POST(request: NextRequest) {
       started: 0,
     });
   }
-
-  const appUrl = getInternalApiUrl();
 
   let started = 0;
 
@@ -139,28 +136,22 @@ export async function POST(request: NextRequest) {
       })
       .eq("id", job.id);
 
-    // Dispatch
-    fetch(`${appUrl}/api/scan/run`, {
-      method: "POST",
-      headers: getInternalFetchHeaders({
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${secret}`,
-      }),
-      body: JSON.stringify({
-        scanJobId: job.id,
-        projectId: job.project_id,
-        repoName,
-        branch,
-        githubToken,
-      }),
+    // Dispatch via Trigger.dev (or HTTP fallback for local dev)
+    const { dispatchScan } = await import("@/lib/scan-dispatch");
+    dispatchScan({
+      scanJobId: job.id,
+      projectId: job.project_id,
+      repoName,
+      branch,
+      githubToken,
     }).catch((err) => {
-      console.error("[process-queue] Failed to dispatch:", err);
+      console.error("[process-queue] Scan dispatch failed:", err);
       createAdminClient()
         .from("scan_jobs")
         .update({
           status: "failed",
           finished_at: new Date().toISOString(),
-          result: { error: "Failed to start scan worker: " + String(err) },
+          result: { error: "Failed to start scan: " + String(err) },
         })
         .eq("id", job.id)
         .then(undefined, () => {});
