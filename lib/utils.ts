@@ -18,3 +18,19 @@ export function getInternalApiUrl(): string {
   if (process.env.NEXT_PUBLIC_APP_URL) return process.env.NEXT_PUBLIC_APP_URL;
   return "http://localhost:3000";
 }
+
+/**
+ * Returns headers needed for internal server-to-server fetch calls.
+ *
+ * Includes the Vercel Deployment Protection bypass header when
+ * VERCEL_AUTOMATION_BYPASS_SECRET is set, so internal calls don't get
+ * blocked by Vercel's authentication wall.
+ */
+export function getInternalFetchHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  const headers: Record<string, string> = { ...extra };
+  const bypassSecret = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
+  if (bypassSecret) {
+    headers["x-vercel-protection-bypass"] = bypassSecret;
+  }
+  return headers;
+}

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
-import { getInternalApiUrl } from "@/lib/utils";
+import { getInternalApiUrl, getInternalFetchHeaders } from "@/lib/utils";
 import { runScan } from "@/lib/scan-runner";
 import { timingSafeEqual, createHmac } from "node:crypto";
 
@@ -126,10 +126,10 @@ export async function POST(request: NextRequest) {
 
     fetch(`${appUrl}/api/scan/run`, {
       method: "POST",
-      headers: {
+      headers: getInternalFetchHeaders({
         "Content-Type": "application/json",
         Authorization: `Bearer ${process.env.SCAN_WORKER_SECRET?.trim()}`,
-      },
+      }),
       body: JSON.stringify({
         scanJobId: job.id,
         projectId: project.id,

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { authenticateCliRequest } from "@/lib/cli-auth";
 import { createAdminClient } from "@/lib/supabase/server";
-import { getInternalApiUrl } from "@/lib/utils";
+import { getInternalApiUrl, getInternalFetchHeaders } from "@/lib/utils";
 
 export const maxDuration = 300;
 
@@ -116,10 +116,10 @@ export async function POST(request: Request) {
 
   fetch(`${appUrl}/api/scan/run-local`, {
     method: "POST",
-    headers: {
+    headers: getInternalFetchHeaders({
       "Content-Type": "application/json",
       Authorization: `Bearer ${process.env.SCAN_WORKER_SECRET?.trim()}`,
-    },
+    }),
     body: JSON.stringify({
       scanJobId: jobId,
       projectId: project.id,

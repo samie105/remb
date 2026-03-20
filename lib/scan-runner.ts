@@ -9,7 +9,7 @@
  */
 
 import { createAdminClient } from "@/lib/supabase/server";
-import { getInternalApiUrl } from "@/lib/utils";
+import { getInternalApiUrl, getInternalFetchHeaders } from "@/lib/utils";
 import type { Json } from "@/lib/supabase/types";
 import {
   getRepoFiles,
@@ -674,10 +674,10 @@ function chainNextChunk(
 
   fetch(`${appUrl}/api/scan/run`, {
     method: "POST",
-    headers: {
+    headers: getInternalFetchHeaders({
       "Content-Type": "application/json",
       Authorization: `Bearer ${secret}`,
-    },
+    }),
     body: JSON.stringify({ scanJobId, projectId, repoName, branch, githubToken, chunkOffset }),
   })
     .then(async (res) => {
@@ -714,10 +714,10 @@ function triggerQueueProcessing() {
 
   fetch(`${appUrl}/api/scan/process-queue`, {
     method: "POST",
-    headers: {
+    headers: getInternalFetchHeaders({
       "Content-Type": "application/json",
       Authorization: `Bearer ${secret}`,
-    },
+    }),
   }).catch((err) => {
     console.error("[scan-runner] Failed to trigger queue processing:", err);
   });

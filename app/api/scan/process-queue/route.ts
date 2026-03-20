@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
-import { getInternalApiUrl } from "@/lib/utils";
+import { getInternalApiUrl, getInternalFetchHeaders } from "@/lib/utils";
 
 /**
  * POST /api/scan/process-queue
@@ -142,10 +142,10 @@ export async function POST(request: NextRequest) {
     // Dispatch
     fetch(`${appUrl}/api/scan/run`, {
       method: "POST",
-      headers: {
+      headers: getInternalFetchHeaders({
         "Content-Type": "application/json",
         Authorization: `Bearer ${secret}`,
-      },
+      }),
       body: JSON.stringify({
         scanJobId: job.id,
         projectId: job.project_id,

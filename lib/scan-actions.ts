@@ -3,7 +3,7 @@
 import { createAdminClient } from "@/lib/supabase/server";
 import { getSession } from "@/lib/auth";
 import { getLatestCommitSha } from "@/lib/github-reader";
-import { getInternalApiUrl } from "@/lib/utils";
+import { getInternalApiUrl, getInternalFetchHeaders } from "@/lib/utils";
 import type { ScanJobRow } from "@/lib/supabase/types";
 
 /* ─── types ─── */
@@ -246,10 +246,10 @@ export async function createScanJob(
 
   fetch(`${appUrl}/api/scan/run`, {
     method: "POST",
-    headers: {
+    headers: getInternalFetchHeaders({
       "Content-Type": "application/json",
       Authorization: `Bearer ${workerSecret}`,
-    },
+    }),
     body: JSON.stringify({
       scanJobId: job.id,
       projectId,

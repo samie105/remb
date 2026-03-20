@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { authenticateCliRequest } from "@/lib/cli-auth";
 import { createAdminClient } from "@/lib/supabase/server";
 import { getLatestCommitSha } from "@/lib/github-reader";
-import { getInternalApiUrl } from "@/lib/utils";
+import { getInternalApiUrl, getInternalFetchHeaders } from "@/lib/utils";
 
 /**
  * GET /api/cli/scan?scanId=<uuid>
@@ -224,10 +224,10 @@ export async function POST(request: Request) {
 
   fetch(`${appUrl}/api/scan/run`, {
     method: "POST",
-    headers: {
+    headers: getInternalFetchHeaders({
       "Content-Type": "application/json",
       Authorization: `Bearer ${workerSecret}`,
-    },
+    }),
     body: JSON.stringify({
       scanJobId: job.id,
       projectId: project.id,

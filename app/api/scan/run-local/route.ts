@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
-import { getInternalApiUrl } from "@/lib/utils";
+import { getInternalApiUrl, getInternalFetchHeaders } from "@/lib/utils";
 import { extractFeaturesFromFile, generateEmbedding } from "@/lib/openai";
 import type { ScanLogEntry, ScanResult } from "@/lib/scan-actions";
 import type { Json } from "@/lib/supabase/types";
@@ -283,10 +283,10 @@ export async function POST(request: NextRequest) {
     if (secret) {
       fetch(`${appUrl}/api/scan/process-queue`, {
         method: "POST",
-        headers: {
+        headers: getInternalFetchHeaders({
           "Content-Type": "application/json",
           Authorization: `Bearer ${secret}`,
-        },
+        }),
       }).catch(() => {});
     }
   }

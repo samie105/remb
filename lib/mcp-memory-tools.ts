@@ -1545,15 +1545,15 @@ export async function callBuiltinTool(
       if (scanErr) throw new Error(scanErr.message);
 
       // Fire-and-forget to scan worker
-      const { getInternalApiUrl } = await import("@/lib/utils");
+      const { getInternalApiUrl, getInternalFetchHeaders } = await import("@/lib/utils");
       const appUrl = getInternalApiUrl();
 
       fetch(`${appUrl}/api/scan/run`, {
         method: "POST",
-        headers: {
+        headers: getInternalFetchHeaders({
           "Content-Type": "application/json",
           Authorization: `Bearer ${process.env.SCAN_WORKER_SECRET?.trim()}`,
-        },
+        }),
         body: JSON.stringify({
           scanJobId: scanJob.id,
           projectId: project.id,
