@@ -65,7 +65,11 @@ describe("ApiClient", () => {
     });
 
     it("fires network error event on fetch failure", async () => {
-      mockFetch.mockRejectedValueOnce(new Error("ECONNREFUSED"));
+      // Must reject all retry attempts (initial + MAX_RETRIES)
+      mockFetch
+        .mockRejectedValueOnce(new Error("ECONNREFUSED"))
+        .mockRejectedValueOnce(new Error("ECONNREFUSED"))
+        .mockRejectedValueOnce(new Error("ECONNREFUSED"));
 
       const client = createClient();
       const networkErrorFired = vi.fn();
@@ -216,7 +220,11 @@ describe("ApiClient", () => {
   describe("timeout handling", () => {
     it("fires network error and throws on timeout", async () => {
       const abortError = new DOMException("The operation was aborted", "AbortError");
-      mockFetch.mockRejectedValueOnce(abortError);
+      // Must reject all retry attempts (initial + MAX_RETRIES)
+      mockFetch
+        .mockRejectedValueOnce(abortError)
+        .mockRejectedValueOnce(abortError)
+        .mockRejectedValueOnce(abortError);
 
       const client = createClient();
       const networkErrorFired = vi.fn();
