@@ -1,3 +1,5 @@
+import { extract as tarExtract } from "tar-stream";
+
 const GITHUB_API = "https://api.github.com";
 
 /* ─── types ─── */
@@ -344,10 +346,9 @@ export async function downloadRepoContents(
   // GitHub returns a gzipped tarball — decompress and parse
   const { Readable } = await import("node:stream");
   const { createGunzip } = await import("node:zlib");
-  const { extract } = await import("tar-stream");
 
   const buffer = Buffer.from(await res.arrayBuffer());
-  const extractor = extract();
+  const extractor = tarExtract();
 
   return new Promise<Map<string, string>>((resolve, reject) => {
     extractor.on("entry", (header, stream, next) => {
