@@ -22,6 +22,10 @@ vi.mock("@/lib/github-reader", () => ({
   getLatestCommitSha: getLatestCommitShaMock,
 }));
 
+vi.mock("@/lib/scan-dispatch", () => ({
+  dispatchScan: vi.fn().mockResolvedValue(undefined),
+}));
+
 import { GET, POST } from "./route";
 
 // ── Helpers ───────────────────────────────────────────────
@@ -89,6 +93,9 @@ function createScanDb(opts: {
                   : { data: { id: "scan_1" }, error: null }
               ),
             })),
+          })),
+          update: vi.fn(() => ({
+            eq: vi.fn().mockResolvedValue({ error: null }),
           })),
         };
       }
@@ -253,6 +260,10 @@ describe("POST /api/cli/scan", () => {
   });
 
   it("starts scan successfully", async () => {
+    // Set required env vars so the route doesn't fail on validation
+    process.env.SCAN_WORKER_SECRET = "test-secret";
+    process.env.OPENAI_API_KEY = "test-key";
+
     createAdminClientMock.mockReturnValue(createScanDb());
 
     const req = new Request("http://localhost/api/cli/scan", {
@@ -265,5 +276,8 @@ describe("POST /api/cli/scan", () => {
 
     expect(body.status).toBe("started");
     expect(body.scanId).toBe("scan_1");
+
+    delete process.env.SCAN_WORKER_SECRET;
+    delete process.env.OPENAI_API_KEY;
   });
 });

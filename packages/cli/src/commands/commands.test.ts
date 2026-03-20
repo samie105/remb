@@ -165,7 +165,7 @@ describe("CLI commands (integration)", () => {
       writeFileSync(join(tmpDir, "test.ts"), "const x = 1;");
 
       const { output, exitCode } = run(
-        ["scan", "--dry-run", "--path", tmpDir, "-p", "test"],
+        ["scan", "--local", "--dry-run", "--path", tmpDir, "-p", "test"],
         { env: { XDG_CONFIG_HOME: tmpDir, REMB_API_KEY: "remb_fake" } }
       );
       expect(exitCode).toBe(0);
