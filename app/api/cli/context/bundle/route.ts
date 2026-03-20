@@ -171,6 +171,42 @@ export async function GET(request: NextRequest) {
 
   const tokenBudget = planRow?.max_token_budget ?? 16000;
 
+  // Active plans with phases
+  const { data: activePlans } = await db
+    .from("plans")
+    .select("id, title, description, status")
+    .eq("project_id", project.id)
+    .eq("user_id", user.id)
+    .eq("status", "active")
+    .order("updated_at", { ascending: false });
+
+  const planIds = (activePlans ?? []).map((p) => p.id);
+  const { data: planPhases } = planIds.length > 0
+    ? await db
+        .from("plan_phases")
+        .select("id, plan_id, title, description, status, sort_order")
+        .in("plan_id", planIds)
+        .neq("status", "skipped")
+        .order("sort_order", { ascending: true })
+    : { data: [] as { id: string; plan_id: string; title: string; description: string | null; status: string; sort_order: number }[] };
+
+  const phasesByPlan = new Map<string, typeof planPhases>();
+  for (const phase of planPhases ?? []) {
+    const list = phasesByPlan.get(phase.plan_id) ?? [];
+    list.push(phase);
+    phasesByPlan.set(phase.plan_id, list);
+  }
+
+  const plans = (activePlans ?? []).map((p) => ({
+    title: p.title,
+    description: p.description,
+    phases: (phasesByPlan.get(p.id) ?? []).map((ph) => ({
+      title: ph.title,
+      description: ph.description,
+      status: ph.status,
+    })),
+  }));
+
   // Build markdown with token budget
   const markdown = buildContextMarkdown(
     { name: project.name, description: project.description, techStack, languages },
@@ -179,6 +215,7 @@ export async function GET(request: NextRequest) {
     conversations,
     dependencies,
     tokenBudget,
+    plans,
   );
 
   return NextResponse.json({
@@ -197,6 +234,7 @@ export async function GET(request: NextRequest) {
     features: significantFeatures,
     conversations,
     dependencies,
+    plans,
     tokenBudget,
     markdown,
   });
@@ -237,6 +275,11 @@ function buildContextMarkdown(
     symbols: string[] | null;
   }>,
   tokenBudget = 16000,
+  plans?: Array<{
+    title: string;
+    description: string | null;
+    phases: Array<{ title: string; description: string | null; status: string }>;
+  }>,
 ): string {
   const lines: string[] = [];
   let currentTokens = 0;
@@ -364,6 +407,24 @@ function buildContextMarkdown(
       if (!addLine(`- **${date}**${tagStr}: ${truncated}`)) break;
     }
     addLine("");
+  }
+
+  // Active plans with phases
+  if (plans && plans.length > 0) {
+    addLines(["## Active Plans", ""]);
+    for (const plan of plans) {
+      addLine(`### ${plan.title}`);
+      if (plan.description) addLine(plan.description);
+      addLine("");
+      if (plan.phases.length > 0) {
+        for (const phase of plan.phases) {
+          const icon = phase.status === "completed" ? "\u2705" : phase.status === "in_progress" ? "\uD83D\uDD04" : "\u2B1C";
+          const desc = phase.description ? ` \u2014 ${phase.description}` : "";
+          if (!addLine(`${icon} **${phase.title}**${desc}`)) break;
+        }
+        addLine("");
+      }
+    }
   }
 
   return lines.join("\n");

@@ -479,6 +479,37 @@ export function createApiClient(opts: ClientOptions = {}) {
         }>;
       }>("GET", "/api/cli/conversations/search", undefined, search);
     },
+
+    /** GET /api/cli/plans — get active plans with phases */
+    getPlans(projectSlug: string) {
+      return request<{
+        plans: Array<{
+          id: string;
+          title: string;
+          description: string | null;
+          status: string;
+          phases: Array<{
+            id: string;
+            title: string;
+            description: string | null;
+            status: string;
+            sort_order: number;
+          }>;
+        }>;
+      }>("GET", "/api/cli/plans", undefined, { projectSlug });
+    },
+
+    /** POST /api/cli/plans — update a phase status */
+    updatePlanPhase(params: {
+      projectSlug: string;
+      planId: string;
+      phaseId: string;
+      action: "complete" | "skip" | "start" | "reset";
+    }) {
+      return request<{
+        updated: { id: string; title: string; status: string };
+      }>("POST", "/api/cli/plans", params);
+    },
   };
 }
 

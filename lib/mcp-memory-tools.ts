@@ -19,7 +19,7 @@ const PREFIX = "remb";
  * Bump this whenever builtin tools are added, removed, or changed.
  * This ensures connected MCP clients get a `notifications/tools/list_changed`.
  */
-export const BUILTIN_TOOLS_VERSION = 4;
+export const BUILTIN_TOOLS_VERSION = 5;
 
 /* ─── tool definitions ─── */
 
@@ -546,6 +546,76 @@ export function getBuiltinTools(): AggregatedTool[] {
       },
       _serverId: "__builtin__",
       _originalName: "scan_on_push",
+    },
+    // ─── Plan tools ───
+    {
+      name: `${PREFIX}__plan_list`,
+      description: "[Remb] List active plans for a project. Returns plans with their phases for IDE/CLI consumption.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          project_slug: {
+            type: "string",
+            description: "Project slug",
+          },
+        },
+        required: ["project_slug"],
+      },
+      _serverId: "__builtin__",
+      _originalName: "plan_list",
+    },
+    {
+      name: `${PREFIX}__plan_get`,
+      description: "[Remb] Get a specific plan with its phases and recent messages.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          plan_id: {
+            type: "string",
+            description: "Plan ID",
+          },
+        },
+        required: ["plan_id"],
+      },
+      _serverId: "__builtin__",
+      _originalName: "plan_get",
+    },
+    {
+      name: `${PREFIX}__plan_update_phase`,
+      description: "[Remb] Update a plan phase status. Use this when a phase is completed, started, or skipped from the IDE.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          phase_id: {
+            type: "string",
+            description: "Phase ID to update",
+          },
+          status: {
+            type: "string",
+            enum: ["pending", "in_progress", "completed", "skipped"],
+            description: "New status for the phase",
+          },
+        },
+        required: ["phase_id", "status"],
+      },
+      _serverId: "__builtin__",
+      _originalName: "plan_update_phase",
+    },
+    {
+      name: `${PREFIX}__plan_phases`,
+      description: "[Remb] Get active plan phases as markdown for .remb file integration. Returns structured phases that the IDE should track.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          project_slug: {
+            type: "string",
+            description: "Project slug",
+          },
+        },
+        required: ["project_slug"],
+      },
+      _serverId: "__builtin__",
+      _originalName: "plan_phases",
     },
     // ─── Cross-project tools ───
     {
@@ -1869,6 +1939,144 @@ export async function callBuiltinTool(
 
       return {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      };
+    }
+
+    // ─── Plan tool implementations ───
+
+    case "plan_list": {
+      const slug = args.project_slug as string;
+      if (!slug) throw new Error("project_slug is required");
+
+      const { data: project } = await db
+        .from("projects")
+        .select("id")
+        .eq("user_id", userId)
+        .eq("slug", slug)
+        .single();
+
+      if (!project) throw new Error(`Project "${slug}" not found`);
+
+      const { data: plans } = await db
+        .from("plans")
+        .select("id, title, description, status, created_at, updated_at")
+        .eq("project_id", project.id)
+        .eq("user_id", userId)
+        .eq("status", "active")
+        .order("updated_at", { ascending: false });
+
+      if (!plans?.length) {
+        return { content: [{ type: "text", text: JSON.stringify({ plans: [] }, null, 2) }] };
+      }
+
+      const planIds = plans.map((p) => p.id);
+      const { data: allPhases } = await db
+        .from("plan_phases")
+        .select("id, plan_id, title, description, status, sort_order")
+        .in("plan_id", planIds)
+        .order("sort_order", { ascending: true });
+
+      const phasesByPlan = new Map<string, unknown[]>();
+      for (const phase of allPhases ?? []) {
+        const list = phasesByPlan.get(phase.plan_id) ?? [];
+        list.push(phase);
+        phasesByPlan.set(phase.plan_id, list);
+      }
+
+      const result = plans.map((p) => ({
+        ...p,
+        phases: phasesByPlan.get(p.id) ?? [],
+      }));
+
+      return { content: [{ type: "text", text: JSON.stringify({ plans: result }, null, 2) }] };
+    }
+
+    case "plan_get": {
+      const planId = args.plan_id as string;
+      if (!planId) throw new Error("plan_id is required");
+
+      const { data: plan } = await db
+        .from("plans")
+        .select("*")
+        .eq("id", planId)
+        .eq("user_id", userId)
+        .single();
+
+      if (!plan) throw new Error("Plan not found");
+
+      const { data: phases } = await db
+        .from("plan_phases")
+        .select("*")
+        .eq("plan_id", planId)
+        .order("sort_order", { ascending: true });
+
+      const { data: messages } = await db
+        .from("plan_messages")
+        .select("id, role, content, created_at")
+        .eq("plan_id", planId)
+        .order("created_at", { ascending: false })
+        .limit(10);
+
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            ...plan,
+            phases: phases ?? [],
+            recent_messages: (messages ?? []).reverse(),
+          }, null, 2),
+        }],
+      };
+    }
+
+    case "plan_update_phase": {
+      const phaseId = args.phase_id as string;
+      const status = args.status as string;
+      if (!phaseId || !status) throw new Error("phase_id and status are required");
+
+      // Verify ownership through plan
+      const { data: phase } = await db
+        .from("plan_phases")
+        .select("id, plan_id, plans!inner(user_id)")
+        .eq("id", phaseId)
+        .single();
+
+      if (!phase) throw new Error("Phase not found");
+      const planOwner = phase.plans as unknown as { user_id: string };
+      if (planOwner.user_id !== userId) throw new Error("Not authorized");
+
+      const { data: updated, error } = await db
+        .from("plan_phases")
+        .update({ status })
+        .eq("id", phaseId)
+        .select("id, title, status, plan_id")
+        .single();
+
+      if (error) throw new Error(error.message);
+
+      // Auto-complete plan if all phases done
+      const { data: remaining } = await db
+        .from("plan_phases")
+        .select("id")
+        .eq("plan_id", updated.plan_id)
+        .in("status", ["pending", "in_progress"]);
+
+      if (!remaining?.length) {
+        await db.from("plans").update({ status: "completed" }).eq("id", updated.plan_id);
+      }
+
+      return { content: [{ type: "text", text: JSON.stringify({ updated }, null, 2) }] };
+    }
+
+    case "plan_phases": {
+      const slug = args.project_slug as string;
+      if (!slug) throw new Error("project_slug is required");
+
+      const { generatePlanMarkdown } = await import("@/lib/plan-actions");
+      const markdown = await generatePlanMarkdown(slug);
+
+      return {
+        content: [{ type: "text", text: markdown || "No active plans for this project." }],
       };
     }
 

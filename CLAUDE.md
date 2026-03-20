@@ -1,7 +1,7 @@
 <!-- remb-dynamic-context -->
 # Remb — Live Project Context
 
-> **Project**: context-management | **Refreshed**: 2026-03-18T23:22
+> **Project**: remb | **Refreshed**: 2026-03-20T13:51
 > This file is auto-generated and gitignored. It injects real project context into every prompt.
 > For the full context bundle, call `remb_loadProjectContext`.
 
@@ -20,201 +20,51 @@ The Form Management feature is structured in 'components/ui/form.tsx', providing
 The Authentication feature, particularly in 'app/auth/login/page.tsx' and 'app/auth/signup/page.tsx', utilizes a responsive design to ensure accessibility across devices. This design choice was made to cater to both desktop and mobile users, enhancing the overall user experience.
 
 ### Account Management Structure (knowledge)
-The Account Management feature is implemented in 'components/dashboard/main/account-main.tsx', providing users with an interface to manage their personal information and security settings. It emphasizes a user-friendly design and includes a loading state to enhance user experience during data fetchi
+The Account Management feature is implemented in 'components/dashboard/main/account-main.tsx', providing users with an interface to manage their personal information and security settings. It emphasizes a user-friendly design and includes a loading state to enhance user experience during data fetching.
 
-### Landing Page — Pending TODOs & Conventions (knowledge)
-Outstanding TODOs for the landing page:
 
-1. .env.local — NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY and CLERK_SECRET_KEY are empty, must be filled from dashboard.clerk.com before auth works
-2. Footer social links — Twitter/X, Instagram, LinkedIn all href="#", need real Worldstreet social URLs
-3. Footer legal
-
-### Landing Page — Footer Structure (knowledge)
-Footer (components/Footer.tsx) — full 4-column layout:
-
-Columns:
-1. Brand logo + tagline
-2. MARKETS: Forex Trading, Cryptocurrencies, Commodities, Stock Indices, CFDs → all /register
-3. TRADE TOOLS: Copy Trading, PAMM Accounts, Vivid AI, Trading Signals, Economic Calendar → all /register
-4. COMPANY:
-
-### Landing Page — Page Structure & CTA Routing (knowledge)
-Home page (app/page.tsx) component order:
-1. Header
-2. HeroGlobe — hero section, stars canvas, earth video, "Get Started Now" → /register (brand yellow button)
-3. WhyChooseSection (id="features") — "Trade Together" heading, "Start trading now" CTA → /register
-4. TickerMarquee — scrolling crypto tick
-
-### Landing Page — Auth Flow (Clerk v7) (knowledge)
-Auth provider: Clerk v7 (@clerk/nextjs v7.0.4) — Google OAuth ONLY, no email/password.
-
-Clerk v7 API differences from v6:
-- useSignIn() returns { signIn, fetchStatus } — NOT isLoaded
-- OAuth: signIn.sso({ strategy: "oauth_google", redirectUrl: "/sso-callback", redirectCallbackUrl: "https://dashboard
-
-### Landing Page — Tech Stack & Project Structure (knowledge)
-Project: Worldstreet landing page at /Users/richie/Desktop/spot/landing-page
-
-Stack:
-- Next.js 16.1.6 (App Router), React 19.2.3, TypeScript
-- Tailwind CSS v4, Framer Motion, Lenis smooth scroll (v1.3.x)
-- pnpm package manager
-- @clerk/nextjs v7.0.4 (auth)
-- lucide-react (icons)
-
-Directory layout:
--
+_...5 more memories — call `remb_loadProjectContext` for all_
 
 ## Current Session Activity
 
-- `22:38:55` viewing `.env.local`
-- `22:52:28` viewing `/Users/richie/Desktop/spot/context-management/.env.local`
-- `22:52:36` viewing `.env.local`
-- `22:53:53` 💬 **user**: Reload env: .env.local
- POST /api/cli/auth/start 500 in 10.9 Failed to start login: TypeError: fetch failed
-- `22:56:01` 💬 **user**: Reload env: .env.local
- POST /api/cli/auth/start 500 in 10.9 Failed to start login: TypeError: fetch failed
-- `22:58:01` 💬 **user**: Reload env: .env.local
- POST /api/cli/auth/start 500 in 10.9 Failed to start login: TypeError: fetch failed
-- `22:59:01` 🤖 **ai**: The error `TypeError: fetch failed` on `/api/cli/auth/start` is odd because that route (`start`) just calls `createCliAuthSession()` which does a Supabase DB insert - no `fetch` call. Let me think...
+- `13:44:52` saved `packages/cli-go/cmd/scan.go`
+- `13:45:01` 🤖 **ai**: There are plan files staged from a previous session. Let me be selective — only commit my changes:
+- `13:46:05` saved `components/dashboard/plan/plan-main.tsx`
+- `13:46:05` saved `components/dashboard/plan/plan-chat.tsx`
+- `13:46:05` saved `components/dashboard/plan/new-plan-dialog.tsx`
+- `13:46:05` saved `app/api/cli/context/bundle/route.ts`
+- `13:46:05` saved `packages/cli/src/commands/plan.ts`
+- `13:46:05` saved `components/dashboard/app-sidebar.tsx`
+- `13:46:05` saved `packages/cli/src/index.ts`
+- `13:46:05` saved `app/api/cli/plans/route.ts`
+- `13:46:05` saved `lib/supabase/types.ts`
+- `13:46:05` saved `packages/cli/src/commands/context.ts`
+- `13:46:05` saved `packages/vscode-extension/package.json`
+- `13:46:05` saved `packages/cli/package.json`
+- `13:46:05` saved `lib/mcp-memory-tools.ts`
+- `13:46:06` saved `packages/cli-npm/package.json`
+- `13:46:06` saved `packages/cli-go/cmd/root.go`
+- `13:47:00` viewing `.trigger/tmp/build-7N6lfP/chunk-4ZGI7K5S.mjs`
+- `13:47:02` 🤖 **ai**: Good, 6 files staged. Let me commit and push:
+Now deploy Trigger.dev (the scan task is only in the main app, not the CLIs):
+- `13:49:02` 🤖 **ai**: All done. Here's the summary:
 
-- `23:10:22` 💬 **user**: so how do i do the github actions for the project?
-- `23:11:01` 🤖 **ai**: The user is asking how to set up GitHub Actions secrets for the release pipeline. They have `NPM_TOKEN` and `VSCE_PAT` in their `.env.local` now and need to add them to GitHub Actions secrets so the r
+### Updates applied
+
+**Go CLI** (
++
+) — Added `Machine`, `EstimatedFiles`, `EstimatedSizeKB` fields to `ScanStatusResponse`. Poll loop now shows worker info once (`Worke
 
 ## Project Context Summary
 
-# context-management — Project Context
+# remb — Project Context
 
-> Auto-generated by Remb. Last updated: 2026-03-18
+> Auto-generated by Remb. Last updated: 2026-03-20
 
-## Core Knowledge (Always Active)
 
-### Uses TypeScript with Next.js
-_preference_
-
-The user prefers TypeScript with functional components, Tailwind CSS for styling, and Shadcn UI components. Uses Zustand or useSyncExternalStore for state management.
-
-### Landing Page — Page Structure & CTA Routing
-_knowledge_
-
-Home page (app/page.tsx) component order:
-1. Header
-2. HeroGlobe — hero section, stars canvas, earth video, "Get Started Now" → /register (brand yellow button)
-3. WhyChooseSection (id="features") — "Trade Together" heading, "Start trading now" CTA → /register
-4. TickerMarquee — scrolling crypto ticker
-5. OpportunitiesSlider — 3-up card slider (Cryptocurrencies, Vivid AI[coming soon], e-Commerce, Forex Markets, Xtreme, Community) with teal Enter buttons → /register, left/right arrows, dot indicators
-6. TextRevealScroll — scroll-driven text reveal
-7. DashboardPreview — parallax 3D dashboard image tilt
-8. FAQSection (id="faq") — accordion, "Create account now" → /register
-9. CTASection (id="pricing") — "Get started now" → /register
-10. Footer
-
-Smooth scroll: Lenis via SmoothScrollProvider wraps entire layout. Hash anchors (/#features, /#faq, /#pricing) handled via hashchange listener → lenis.scrollTo(el, { offset: -80 }).
-
-All CTA buttons wired:
-- "Get Started Now" (hero) → /register
-- "Start trading now" (WhyChooseSection) → /register
-- "Create account now" (FAQ) → /register
-- "Get started now" (CTASection) → /register
-- "Get Started" / "Sign In" (Header) → /register or /login
-- "See Pricing" button REMOVED from hero
-
-### Landing Page — Footer Structure
-_knowledge_
-
-Footer (components/Footer.tsx) — full 4-column layout:
-
-Columns:
-1. Brand logo + tagline
-2. MARKETS: Forex Trading, Cryptocurrencies, Commodities, Stock Indices, CFDs → all /register
-3. TRADE TOOLS: Copy Trading, PAMM Accounts, Vivid AI, Trading Signals, Economic Calendar → all /register
-4. COMPANY: About Us (/about), Contact (mailto:support@worldstreetgold.com), WS Academy (/academy), Blog (/blog), Support (mailto:)
-
-Below columns:
-- Newsletter subscribe section with email input + teal Subscribe button (form onSubmit preventDefault — no backend yet)
-- Regulatory Information block (Worldstreet Markets Limited, 6 regulated activities)
-- Risk Warning block (CFD/forex/crypto risk disclosure)
-- Bottom bar: "Copyright © 2026 Worldstreet. All rights reserved." + Legal / Privacy Policy / Terms of Service links
-
-Social links (Twitter/X, Instagram, LinkedIn) still href="#" — real URLs not yet provided.
-
-Footer uses next/link <Link> for all internal routes, plain <a> for mailto links.
-
-### Landing Page — Pending TODOs & Conventions
-_knowledge_
-
-Outstanding TODOs for the landing page:
-
-1. .env.local — NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY and CLERK_SECRET_KEY are empty, must be filled from dashboard.clerk.com before auth works
-2. Footer social links — Twitter/X, Instagram, LinkedIn all href="#", need real 
 
 _(truncated — call `remb_loadProjectContext` for full context)_
 
 ---
 
 _You already have the above context. Use `remb_conversationLog` to record what you accomplish in this session. Use `remb_createMemory` for important discoveries._
-
-<!-- remb:start -->
-# Remb — AI Context Management
-
-**Project**: `context-management` | **API**: `https://www.useremb.com`
-
-## MANDATORY — Follow These in EVERY Session
-
-### Session Start
-1. Call `remb__conversation_history` — load prior session context
-2. Call `remb__memory_load_context` — load all persistent project memories
-
-### During Work
-3. Call `remb__conversation_log` after completing any significant task
-4. Call `remb__memory_create` when you discover important patterns or decisions
-
-### Session End
-5. Call `remb__conversation_log` with a final summary
-
-### Available MCP Tools
-
-**Memory Management:**
-- `remb__memory_list` — list memories (filter by tier, category, search)
-- `remb__memory_search` — semantic search across all memories
-- `remb__memory_load_context` — load all core + active memories as context
-- `remb__memory_create` — create a new memory
-- `remb__memory_update` — update an existing memory
-- `remb__memory_delete` — delete a memory
-- `remb__memory_promote` — promote a memory to a higher tier
-- `remb__memory_stats` — get memory usage statistics
-- `remb__memory_image_upload` — upload an image to memory
-- `remb__memory_image_list` — list stored images
-
-**Conversation Tracking:**
-- `remb__conversation_log` — record what you discussed or accomplished
-- `remb__conversation_history` — load recent conversation history
-
-**Project & Context:**
-- `remb__projects_list` — list all projects with feature counts
-- `remb__project_get` — get project details, features, and latest scan
-- `remb__context_save` — save a context entry for a feature
-- `remb__context_get` — retrieve context entries (optional feature filter)
-- `remb__context_bundle` — full project context as markdown
-
-**Scanning & Analysis:**
-- `remb__scan_trigger` — trigger a cloud scan
-- `remb__scan_status` — check scan progress
-- `remb__diff_analyze` — analyze a git diff and save extracted changes
-
-**Cross-Project:**
-- `remb__cross_project_search` — search across ALL projects for features, context, and memories
-- `remb__context_bundle` — also works with other project slugs to load another project's full context
-- `remb__memory_create` — create with no project_id to save global preferences that apply everywhere
-
-## Quick Reference
-
-| Situation | Tool |
-|---|---|
-| Starting a session | `conversation_history` + `memory_load_context` |
-| Need project info | `project_get` or `context_bundle` |
-| Saving knowledge | `context_save` or `memory_create` |
-| After code changes | `scan_trigger` or `diff_analyze` |
-| Finishing work | `conversation_log` |
-| Reference another project | `cross_project_search` + `context_bundle` |
-<!-- remb:end -->

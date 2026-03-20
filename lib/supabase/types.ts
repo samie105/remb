@@ -678,6 +678,119 @@ export interface Database {
           },
         ];
       };
+      plans: {
+        Row: {
+          id: string;
+          user_id: string;
+          project_id: string;
+          title: string;
+          description: string | null;
+          status: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          project_id: string;
+          title: string;
+          description?: string | null;
+          status?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          title?: string;
+          description?: string | null;
+          status?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "plans_user_id_fkey";
+            columns: ["user_id"];
+            referencedRelation: "users";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "plans_project_id_fkey";
+            columns: ["project_id"];
+            referencedRelation: "projects";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      plan_phases: {
+        Row: {
+          id: string;
+          plan_id: string;
+          title: string;
+          description: string | null;
+          status: string;
+          sort_order: number;
+          metadata: Json;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          plan_id: string;
+          title: string;
+          description?: string | null;
+          status?: string;
+          sort_order?: number;
+          metadata?: Json;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          title?: string;
+          description?: string | null;
+          status?: string;
+          sort_order?: number;
+          metadata?: Json;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "plan_phases_plan_id_fkey";
+            columns: ["plan_id"];
+            referencedRelation: "plans";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      plan_messages: {
+        Row: {
+          id: string;
+          plan_id: string;
+          role: string;
+          content: string;
+          metadata: Json;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          plan_id: string;
+          role: string;
+          content: string;
+          metadata?: Json;
+          created_at?: string;
+        };
+        Update: {
+          role?: string;
+          content?: string;
+          metadata?: Json;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "plan_messages_plan_id_fkey";
+            columns: ["plan_id"];
+            referencedRelation: "plans";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
     };
     Views: {
       user_storage_stats: {
@@ -868,3 +981,6 @@ export type UserTotpSecretRow = Database["public"]["Tables"]["user_totp_secrets"
 export type MemoryImageRow = Database["public"]["Tables"]["memory_images"]["Row"];
 export type ConversationEntryRow = Database["public"]["Tables"]["conversation_entries"]["Row"];
 export type VideoPresentationRow = Database["public"]["Tables"]["video_presentations"]["Row"];
+export type PlanRow = Database["public"]["Tables"]["plans"]["Row"];
+export type PlanPhaseRow = Database["public"]["Tables"]["plan_phases"]["Row"];
+export type PlanMessageRow = Database["public"]["Tables"]["plan_messages"]["Row"];

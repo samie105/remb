@@ -45,6 +45,31 @@ export const contextCommand = new Command("context")
       mkdirSync(dir, { recursive: true });
       writeFileSync(outPath, bundle.markdown, "utf-8");
 
+      // Also write plan.md if there are active plans
+      try {
+        const { plans } = await client.getPlans(projectSlug);
+        if (plans.length > 0) {
+          let planMd = "# Active Plans\n\n";
+          for (const plan of plans) {
+            planMd += `## ${plan.title}\n`;
+            if (plan.description) planMd += `${plan.description}\n`;
+            planMd += "\n";
+            if (plan.phases.length > 0) {
+              planMd += "### Phases\n";
+              for (const phase of plan.phases) {
+                const icon = phase.status === "completed" ? "✅" : phase.status === "in_progress" ? "🔄" : "⬜";
+                const desc = phase.description ? ` — ${phase.description}` : "";
+                planMd += `${icon} **${phase.title}**${desc}\n`;
+              }
+              planMd += "\n";
+            }
+          }
+          writeFileSync(join(dir, "plan.md"), planMd, "utf-8");
+        }
+      } catch {
+        // Non-fatal — plans may not exist yet
+      }
+
       // Ensure .remb/ is in .gitignore
       ensureGitignore(dir);
 

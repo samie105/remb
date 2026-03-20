@@ -18,6 +18,7 @@ import {
   PlugSocketIcon,
   BrainIcon,
   Video01Icon,
+  NoteIcon,
 } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -96,6 +97,13 @@ const mainNavItems = [
     icon: BrainIcon,
     badge: "New",
     projectAware: true, // becomes /dashboard/[slug]/memory when project active
+  },
+  {
+    label: "Plan",
+    href: "/dashboard/plan",
+    icon: NoteIcon,
+    badge: "New",
+    projectAware: true, // becomes /dashboard/[slug]/plan when project active
   },
   // {
   //   label: "Presentation",
