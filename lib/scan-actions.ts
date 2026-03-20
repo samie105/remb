@@ -111,7 +111,10 @@ async function recoverStaleProjectScans(db: ReturnType<typeof createAdminClient>
       .update({
         status: "failed",
         finished_at: new Date().toISOString(),
-        result: { error: "Scan timed out or worker stopped before completion." },
+        result: {
+          error: "Scan timed out or worker stopped before completion.",
+          logs: [{ timestamp: new Date().toISOString(), file: "", status: "error", message: "Scan timed out or worker stopped before completion." }],
+        },
       })
       .in("id", staleRunningIds);
 
@@ -224,7 +227,10 @@ export async function createScanJob(
     await db.from("scan_jobs").update({
       status: "failed",
       finished_at: new Date().toISOString(),
-      result: { error: "SCAN_WORKER_SECRET is not configured on the server." },
+      result: {
+        error: "SCAN_WORKER_SECRET is not configured on the server.",
+        logs: [{ timestamp: new Date().toISOString(), file: "", status: "error", message: "SCAN_WORKER_SECRET is not configured on the server." }],
+      },
     }).eq("id", job.id);
     await db.from("projects").update({ status: "active" }).eq("id", projectId);
     throw new Error("Server misconfiguration: scan worker secret not set. Contact support.");
@@ -234,7 +240,10 @@ export async function createScanJob(
     await db.from("scan_jobs").update({
       status: "failed",
       finished_at: new Date().toISOString(),
-      result: { error: "OPENAI_API_KEY is not configured on the server." },
+      result: {
+        error: "OPENAI_API_KEY is not configured on the server.",
+        logs: [{ timestamp: new Date().toISOString(), file: "", status: "error", message: "OPENAI_API_KEY is not configured on the server." }],
+      },
     }).eq("id", job.id);
     await db.from("projects").update({ status: "active" }).eq("id", projectId);
     throw new Error("Server misconfiguration: OpenAI API key not set. Contact support.");
@@ -250,11 +259,15 @@ export async function createScanJob(
     githubToken,
   }).catch(async (err) => {
     console.error("[createScanJob] Scan dispatch failed:", err);
+    const errorMsg = "Failed to start scan: " + String(err);
     const adminDb = createAdminClient();
     await adminDb.from("scan_jobs").update({
       status: "failed",
       finished_at: new Date().toISOString(),
-      result: { error: "Failed to start scan: " + String(err) },
+      result: {
+        error: errorMsg,
+        logs: [{ timestamp: new Date().toISOString(), file: "", status: "error", message: errorMsg }],
+      },
     }).eq("id", job.id).then(undefined, () => {});
     await adminDb.from("projects").update({ status: "active" }).eq("id", projectId).then(undefined, () => {});
   });
@@ -435,7 +448,7 @@ export async function cancelScanJob(scanJobId: string): Promise<void> {
   // Get the scan job
   const { data: job } = await db
     .from("scan_jobs")
-    .select("id, project_id, status")
+    .select("id, project_id, status, result")
     .eq("id", scanJobId)
     .single();
 
@@ -469,6 +482,17 @@ export async function cancelScanJob(scanJobId: string): Promise<void> {
     .from("projects")
     .update({ status: "active" })
     .eq("id", job.project_id);
+
+  // Cancel the Trigger.dev run if we have a run ID
+  const triggerRunId = (job.result as Record<string, unknown> | null)?._trigger_run_id;
+  if (triggerRunId && typeof triggerRunId === "string" && process.env.TRIGGER_SECRET_KEY) {
+    try {
+      const { runs } = await import("@trigger.dev/sdk/v3");
+      await runs.cancel(triggerRunId);
+    } catch {
+      // Non-fatal: run may have already finished or the API may be unavailable
+    }
+  }
 }
 
 /** Update scan configuration for a project. */

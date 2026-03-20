@@ -16,7 +16,6 @@ import {
   getLatestCommitSha,
   getRembIgnorePatterns,
   parseIgnorePatterns,
-  processInBatches,
 } from "@/lib/github-reader";
 import { extractFeaturesFromFile, generateEmbedding } from "@/lib/openai";
 import type { ImportContext } from "@/lib/openai";
@@ -102,15 +101,35 @@ export async function runScan(
     if (filePath.endsWith("requirements.txt") || filePath.endsWith("pyproject.toml")) techStackSet.add("Python");
   }
 
+  /** Check if the scan was cancelled by the user. Returns true if cancelled. */
+  async function isCancelled(): Promise<boolean> {
+    try {
+      const { data: jobCheck } = await db
+        .from("scan_jobs")
+        .select("status")
+        .eq("id", scanJobId)
+        .single();
+      return jobCheck?.status === "failed";
+    } catch {
+      return false;
+    }
+  }
+
+  /** Rolling log count — we keep all logs for the final result but only send
+   *  the latest window in intermediate DB updates to avoid bloating JSONB writes. */
+  let dbFlushCounter = 0;
+
   async function pushLog(entry: ScanLogEntry, partialResult: Partial<ScanResult>) {
     logs.push(entry);
-    // Flush to DB every 5 log entries (or immediately on errors) so the UI can poll progress
-    if (logs.length % 5 === 0 || entry.status === "error") {
-      await db
-        .from("scan_jobs")
-        .update({ result: buildJobResult(partialResult) as Json })
-        .eq("id", scanJobId);
-    }
+    dbFlushCounter++;
+    // Flush every entry during scanning (errors immediately, progress every entry)
+    // Use only last 200 logs in intermediate updates to limit JSONB size
+    const recentLogs = logs.length > 200 ? logs.slice(-200) : logs;
+    const resultWithRecentLogs = { ...buildJobResult(partialResult), logs: recentLogs };
+    await db
+      .from("scan_jobs")
+      .update({ result: resultWithRecentLogs as Json })
+      .eq("id", scanJobId);
   }
 
   try {
@@ -306,7 +325,7 @@ export async function runScan(
     // ═══════════════════════════════════════════════════════════════════════════
 
     await pushLog(
-      { timestamp: new Date().toISOString(), file: "", status: "scanning", message: "Fetching file contents and building dependency graph..." },
+      { timestamp: new Date().toISOString(), file: "", status: "scanning", message: `Indexing imports for ${queuedFiles.length} files...` },
       { files_total: filesTotal, files_scanned: 0, features_created: 0, entries_created: 0, errors: 0, duration_ms: Date.now() - scanStartMs },
     );
 
@@ -319,57 +338,79 @@ export async function runScan(
     // Track which files had valid content (not oversized or failed)
     const validFiles = new Set<string>();
 
-    // Fetch contents in batches of 5, extract imports, then DISCARD content to save memory
-    await processInBatches(queuedFiles, 5, async (file) => {
-      try {
-        const content = await getFileContent(githubToken, repoName, file.path);
-        if (content.length > 100_000) return; // Skip oversized files
-        validFiles.add(file.path);
+    // Fetch contents in batches of 5, extract imports, then DISCARD content to save memory.
+    // Check for cancellation every 10 files and log progress every 20 files.
+    let pass1Processed = 0;
+    const pass1Total = queuedFiles.length;
 
-        // Extract imports (fast regex, no LLM)
-        const allImports = extractImports(content, file.path, fileIndex);
-        const internalImports = getInternalImports(allImports);
-
-        const targets: string[] = [];
-        const imports: Array<{ path: string; symbols: string[] }> = [];
-
-        for (const imp of internalImports) {
-          if (imp.resolvedPath) {
-            targets.push(imp.resolvedPath);
-            imports.push({ path: imp.resolvedPath, symbols: imp.symbols });
-            // Build reverse graph
-            const rev = reverseGraph.get(imp.resolvedPath) ?? [];
-            rev.push(file.path);
-            reverseGraph.set(imp.resolvedPath, rev);
-          }
-        }
-
-        importGraph.set(file.path, targets);
-        fileImports.set(file.path, imports);
-
-        // Upsert file dependencies to DB
-        if (internalImports.length > 0) {
-          const rows = internalImports
-            .filter((imp) => imp.resolvedPath)
-            .map((imp) => ({
-              project_id: projectId,
-              source_path: file.path,
-              target_path: imp.resolvedPath!,
-              import_type: imp.importType,
-              imported_symbols: imp.symbols.length > 0 ? imp.symbols : null,
-              scan_job_id: scanJobId,
-            }));
-
-          if (rows.length > 0) {
-            await db.from("file_dependencies").upsert(rows, {
-              onConflict: "project_id,source_path,target_path",
-            });
-          }
-        }
-      } catch {
-        // Non-fatal: content fetch or import extraction failure
+    for (let i = 0; i < queuedFiles.length; i += 5) {
+      // ── Cancellation check every batch ──
+      if (i > 0 && i % 10 === 0) {
+        if (await isCancelled()) throw new Error("Scan cancelled by user");
       }
-    });
+
+      const batch = queuedFiles.slice(i, i + 5);
+      await Promise.all(batch.map(async (file) => {
+        try {
+          const content = await getFileContent(githubToken, repoName, file.path);
+          if (content.length > 100_000) return; // Skip oversized files
+          validFiles.add(file.path);
+
+          // Extract imports (fast regex, no LLM)
+          const allImports = extractImports(content, file.path, fileIndex);
+          const internalImports = getInternalImports(allImports);
+
+          const targets: string[] = [];
+          const imports: Array<{ path: string; symbols: string[] }> = [];
+
+          for (const imp of internalImports) {
+            if (imp.resolvedPath) {
+              targets.push(imp.resolvedPath);
+              imports.push({ path: imp.resolvedPath, symbols: imp.symbols });
+              // Build reverse graph
+              const rev = reverseGraph.get(imp.resolvedPath) ?? [];
+              rev.push(file.path);
+              reverseGraph.set(imp.resolvedPath, rev);
+            }
+          }
+
+          importGraph.set(file.path, targets);
+          fileImports.set(file.path, imports);
+
+          // Upsert file dependencies to DB
+          if (internalImports.length > 0) {
+            const rows = internalImports
+              .filter((imp) => imp.resolvedPath)
+              .map((imp) => ({
+                project_id: projectId,
+                source_path: file.path,
+                target_path: imp.resolvedPath!,
+                import_type: imp.importType,
+                imported_symbols: imp.symbols.length > 0 ? imp.symbols : null,
+                scan_job_id: scanJobId,
+              }));
+
+            if (rows.length > 0) {
+              await db.from("file_dependencies").upsert(rows, {
+                onConflict: "project_id,source_path,target_path",
+              });
+            }
+          }
+        } catch {
+          // Non-fatal: content fetch or import extraction failure
+        }
+      }));
+
+      pass1Processed = Math.min(i + 5, pass1Total);
+
+      // Log progress every 20 files so the UI shows movement
+      if (pass1Processed % 20 === 0 || pass1Processed === pass1Total) {
+        await pushLog(
+          { timestamp: new Date().toISOString(), file: "", status: "scanning", message: `Indexed imports: ${pass1Processed}/${pass1Total} files` },
+          { files_total: filesTotal, files_scanned: 0, features_created: 0, entries_created: 0, errors: 0, duration_ms: Date.now() - scanStartMs },
+        );
+      }
+    }
 
     // ── Topological sort (leaves first → pages/routes last) ──────────────────
     // Kahn's algorithm with cycle handling
@@ -414,13 +455,7 @@ export async function runScan(
       }
 
       // Check if the scan was cancelled
-      const { data: jobCheck } = await db
-        .from("scan_jobs")
-        .select("status")
-        .eq("id", scanJobId)
-        .single();
-
-      if (jobCheck?.status === "failed") {
+      if (await isCancelled()) {
         throw new Error("Scan cancelled by user");
       }
 
@@ -645,12 +680,22 @@ export async function runScan(
     return result;
   } catch (err) {
     const duration_ms = Date.now() - scanStartMs;
+    const errorMsg = err instanceof Error ? err.message : String(err);
+
+    // Always append an error entry so build log shows what went wrong
+    logs.push({
+      timestamp: new Date().toISOString(),
+      file: "",
+      status: "error" as const,
+      message: `Scan failed: ${errorMsg}`,
+    });
+
     await db
       .from("scan_jobs")
       .update({
         status: "failed",
         result: {
-          error: err instanceof Error ? err.message : String(err),
+          error: errorMsg,
           files_total: filesTotal,
           files_scanned: filesProcessed,
           features_created: featuresCreated,

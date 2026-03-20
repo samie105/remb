@@ -1,4 +1,4 @@
-import { task, logger } from "@trigger.dev/sdk/v3";
+import { task, logger, AbortTaskRunError } from "@trigger.dev/sdk/v3";
 import { runScan } from "@/lib/scan-runner";
 import { createAdminClient } from "@/lib/supabase/server";
 
@@ -26,6 +26,47 @@ export const scanProjectTask = task({
     minTimeoutInMs: 2000,
     maxTimeoutInMs: 30000,
     factor: 2,
+  },
+  onFailure: async ({ payload, error }) => {
+    // Ensure DB is cleaned up even if the task is cancelled/killed by Trigger.dev
+    const { scanJobId, projectId } = payload as ScanProjectPayload;
+    const db = createAdminClient();
+
+    const { data: job } = await db
+      .from("scan_jobs")
+      .select("status, result")
+      .eq("id", scanJobId)
+      .single();
+
+    // Only update if still in running state (avoid overriding user cancel)
+    if (job?.status === "running") {
+      const existing = (job.result as Record<string, unknown>) ?? {};
+      const existingLogs = Array.isArray(existing.logs) ? existing.logs : [];
+      const errorMsg = error instanceof Error ? error.message : "Task killed by worker";
+
+      // Append an error entry so the build log always shows what went wrong
+      const errorLogEntry = {
+        timestamp: new Date().toISOString(),
+        file: "",
+        status: "error",
+        message: `Scan failed: ${errorMsg}`,
+      };
+
+      await db
+        .from("scan_jobs")
+        .update({
+          status: "failed",
+          finished_at: new Date().toISOString(),
+          result: {
+            ...existing,
+            error: errorMsg,
+            logs: [...existingLogs, errorLogEntry],
+          },
+        })
+        .eq("id", scanJobId);
+
+      await db.from("projects").update({ status: "active" }).eq("id", projectId);
+    }
   },
   run: async (payload: ScanProjectPayload) => {
     const { scanJobId, projectId, repoName, branch, githubToken } = payload;
@@ -59,6 +100,26 @@ export const scanProjectTask = task({
       });
       return { ok: true, files_scanned: result.files_scanned };
     } catch (err) {
+      // If the run was aborted by Trigger.dev (e.g. runs.cancel()), clean up gracefully
+      if (err instanceof AbortTaskRunError) {
+        logger.warn("Scan task aborted", { scanJobId });
+        const abortDb = createAdminClient();
+        const { data: abortJob } = await abortDb
+          .from("scan_jobs")
+          .select("status")
+          .eq("id", scanJobId)
+          .single();
+        if (abortJob?.status === "running") {
+          await abortDb.from("scan_jobs").update({
+            status: "failed",
+            finished_at: new Date().toISOString(),
+            result: { error: "Scan cancelled" },
+          }).eq("id", scanJobId);
+          await abortDb.from("projects").update({ status: "active" }).eq("id", projectId);
+        }
+        return { ok: false, error: "Scan cancelled" };
+      }
+
       // runScan already marked the job "failed" in DB before throwing
       logger.error("Scan pipeline failed", {
         scanJobId,

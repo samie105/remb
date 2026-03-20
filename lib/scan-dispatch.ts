@@ -18,7 +18,25 @@ export async function dispatchScan(payload: ScanDispatchPayload): Promise<void> 
   if (process.env.TRIGGER_SECRET_KEY) {
     // Trigger.dev path — reliable, retried, no Vercel timeout issues
     const { scanProjectTask } = await import("@/trigger/scan-project");
-    await scanProjectTask.trigger(payload);
+    const handle = await scanProjectTask.trigger(payload);
+
+    // Store the Trigger.dev run ID so we can cancel it later
+    if (handle?.id) {
+      const db = createAdminClient();
+      await db
+        .from("scan_jobs")
+        .update({
+          result: {
+            _trigger_run_id: handle.id,
+            _dispatch_repo: payload.repoName,
+            _dispatch_branch: payload.branch,
+            logs: [{ timestamp: new Date().toISOString(), file: "", status: "scanning", message: "Scan dispatched to cloud worker" }],
+          },
+        })
+        .eq("id", payload.scanJobId)
+        .then(undefined, () => {});
+    }
+
     return;
   }
 
@@ -42,11 +60,15 @@ export async function dispatchScan(payload: ScanDispatchPayload): Promise<void> 
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
+    const errorMsg = `Scan worker rejected: HTTP ${res.status} — ${body.slice(0, 200)}`;
     const db = createAdminClient();
     await db.from("scan_jobs").update({
       status: "failed",
       finished_at: new Date().toISOString(),
-      result: { error: `Scan worker rejected: HTTP ${res.status} — ${body.slice(0, 200)}` },
+      result: {
+        error: errorMsg,
+        logs: [{ timestamp: new Date().toISOString(), file: "", status: "error", message: errorMsg }],
+      },
     }).eq("id", payload.scanJobId).then(undefined, () => {});
     await db.from("projects").update({ status: "active" }).eq("id", payload.projectId).then(undefined, () => {});
     throw new Error(`Scan dispatch failed: HTTP ${res.status}`);
