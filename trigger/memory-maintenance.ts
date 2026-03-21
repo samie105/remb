@@ -8,13 +8,16 @@ export interface MemoryMaintenancePayload {
   /** Optional: limit to a single user */
   userId?: string;
   /** Which operations to run (default: all) */
-  operations?: ("archive" | "consolidate" | "compress")[];
+  operations?: ("archive" | "consolidate" | "compress" | "synthesize")[];
 }
 
 /* ─── Configuration ─── */
 
 const STALE_DAYS = 60; // Archive active memories not accessed in 60 days
 const CONSOLIDATION_SIMILARITY = 0.88; // Cosine threshold for merge candidates
+const SYNTHESIS_SIMILARITY_MIN = 0.70; // Related but distinct
+const SYNTHESIS_SIMILARITY_MAX = 0.87; // Below consolidation threshold
+const SYNTHESIS_MIN_CLUSTER = 3; // Minimum memories to form a cluster
 const MAX_USERS_PER_RUN = 50;
 const BATCH_SIZE = 100;
 
@@ -36,7 +39,7 @@ export const memoryMaintenanceTask = task({
   run: async (payload: MemoryMaintenancePayload) => {
     const db = createAdminClient();
     const ops = payload.operations ?? ["archive", "compress", "consolidate"];
-    const stats = { archived: 0, compressed: 0, consolidated: 0, errors: 0 };
+    const stats = { archived: 0, compressed: 0, consolidated: 0, synthesized: 0, errors: 0 };
 
     // Get users to process
     let userIds: string[];
@@ -61,6 +64,9 @@ export const memoryMaintenanceTask = task({
         }
         if (ops.includes("consolidate")) {
           stats.consolidated += await consolidateSimilarMemories(db, userId);
+        }
+        if (ops.includes("synthesize")) {
+          stats.synthesized += await synthesizeMemoryClusters(db, userId);
         }
       } catch (err) {
         stats.errors++;
@@ -90,7 +96,7 @@ export const weeklyMemoryConsolidation = schedules.task({
   maxDuration: 300,
   machine: "small-2x",
   run: async () => {
-    return memoryMaintenanceTask.trigger({ operations: ["consolidate"] });
+    return memoryMaintenanceTask.trigger({ operations: ["consolidate", "synthesize"] });
   },
 });
 
@@ -254,6 +260,114 @@ async function consolidateSimilarMemories(
   return count;
 }
 
+/* ─── Operation: Synthesize related memory clusters ─── */
+
+async function synthesizeMemoryClusters(
+  db: ReturnType<typeof createAdminClient>,
+  userId: string,
+): Promise<number> {
+  // Find clusters of related-but-distinct memories via SQL (RPC not in generated types yet)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: rows, error } = await (db as any).rpc("find_memory_clusters", {
+    p_user_id: userId,
+    p_similarity_min: SYNTHESIS_SIMILARITY_MIN,
+    p_similarity_max: SYNTHESIS_SIMILARITY_MAX,
+    p_min_cluster_size: SYNTHESIS_MIN_CLUSTER,
+    p_max_clusters: 10,
+  }) as { data: Array<{ cluster_id: number; memory_id: string; title: string; content: string; category: string; tier: string; similarity_to_centroid: number }> | null; error: any };
+
+  if (error || !rows?.length) return 0;
+
+  // Group rows by cluster_id
+  const clusters = new Map<number, typeof rows>();
+  for (const row of rows) {
+    const list = clusters.get(row.cluster_id) ?? [];
+    list.push(row);
+    clusters.set(row.cluster_id, list);
+  }
+
+  let count = 0;
+
+  for (const [clusterId, members] of clusters) {
+    if (members.length < SYNTHESIS_MIN_CLUSTER) continue;
+
+    try {
+      // Check if we already have a synthesis for this cluster
+      const memberIds = members.map((m) => m.memory_id);
+      const { data: existing } = await db
+        .from("memories")
+        .select("id")
+        .eq("user_id", userId)
+        .contains("tags", ["synthesized"])
+        .limit(1);
+
+      // Build the synthesis prompt
+      const memoryTexts = members
+        .map((m, i) => `[${i + 1}] ${m.title}:\n${m.content}`)
+        .join("\n\n");
+
+      const synthesis = await aiSynthesize(memoryTexts, members.length);
+      if (!synthesis) continue;
+
+      // Generate embedding for the synthesis
+      const embedding = await generateEmbedding(synthesis.content.slice(0, 8000));
+
+      // Check for duplicate synthesis (don't create if very similar to existing)
+      const { data: dupes } = await db.rpc("search_memories", {
+        p_user_id: userId,
+        query_embedding: `[${embedding.join(",")}]`,
+        match_count: 1,
+      });
+
+      if ((dupes?.[0]?.similarity ?? 0) >= 0.92) {
+        logger.info(`Skipping cluster ${clusterId} — synthesis already exists`);
+        continue;
+      }
+
+      // Create the synthesis memory
+      const { data: newMemory } = await db
+        .from("memories")
+        .insert({
+          user_id: userId,
+          tier: "core",
+          category: "knowledge",
+          title: synthesis.title,
+          content: synthesis.content,
+          embedding: `[${embedding.join(",")}]`,
+          token_count: Math.ceil(synthesis.content.length / 4),
+          tags: ["synthesized", "auto-generated"],
+        })
+        .select("id")
+        .single();
+
+      if (!newMemory) continue;
+
+      // Link synthesis to source memories via entity_relations (table not in generated types yet)
+      const relations = memberIds.map((sourceId) => ({
+        user_id: userId,
+        source_entity: `memory:${sourceId}`,
+        target_entity: `memory:${newMemory.id}`,
+        relation_type: "synthesized_into",
+        confidence: 0.9,
+        source: "memory-maintenance",
+      }));
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (db as any).from("entity_relations").insert(relations);
+
+      count++;
+      logger.info(`Synthesized cluster ${clusterId} (${members.length} memories) → ${newMemory.id}`);
+    } catch (err) {
+      logger.error(`Synthesis failed for cluster ${clusterId}`, { error: String(err) });
+    }
+
+    await new Promise((r) => setTimeout(r, 300));
+  }
+
+  logger.info(`Synthesized ${count} memory clusters for ${userId}`);
+  return count;
+}
+
 /* ─── AI helpers ─── */
 
 async function aiCompress(title: string, content: string): Promise<string> {
@@ -304,4 +418,39 @@ async function aiMerge(
   });
 
   return response.choices[0]?.message?.content?.trim() ?? null;
+}
+
+async function aiSynthesize(
+  memoryTexts: string,
+  count: number,
+): Promise<{ title: string; content: string } | null> {
+  const response = await getOpenAI().chat.completions.create({
+    model: "gpt-4.1-nano",
+    max_tokens: 600,
+    temperature: 0,
+    messages: [
+      {
+        role: "system",
+        content:
+          `You are synthesizing ${count} related memories into a single composite understanding. ` +
+          "These memories cover different aspects of the same topic. " +
+          "Create a unified, comprehensive knowledge entry that captures the full picture. " +
+          "Include key patterns, decisions, and relationships between the memories. " +
+          "Output JSON: {\"title\": \"...\", \"content\": \"...\"}",
+      },
+      { role: "user", content: memoryTexts },
+    ],
+    response_format: { type: "json_object" },
+  });
+
+  const raw = response.choices[0]?.message?.content?.trim();
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw) as { title?: string; content?: string };
+    if (!parsed.title || !parsed.content) return null;
+    return { title: parsed.title, content: parsed.content };
+  } catch {
+    return null;
+  }
 }

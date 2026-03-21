@@ -74,7 +74,17 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Check for existing running/queued scan
+    // Check for existing running/queued scan (auto-expire stale running jobs > 30 min)
+    const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+    
+    // Clean up stale "running" jobs first
+    await db
+      .from("scan_jobs")
+      .update({ status: "failed", finished_at: new Date().toISOString(), result: { error: "Timed out (stuck running > 30 min)" } })
+      .eq("project_id", project.id)
+      .eq("status", "running")
+      .lt("started_at", thirtyMinAgo);
+
     const { data: existing } = await db
       .from("scan_jobs")
       .select("id")
@@ -120,27 +130,29 @@ export async function POST(request: NextRequest) {
     }
 
     // Dispatch via Trigger.dev (or HTTP fallback for local dev)
-    const { dispatchScan } = await import("@/lib/scan-dispatch");
-    dispatchScan({
-      scanJobId: job.id,
-      projectId: project.id,
-      repoName: project.repo_name ?? project.id,
-      branch: project.branch ?? "main",
-      githubToken: user.github_token,
-    }).catch((err) => {
+    try {
+      const { dispatchScan } = await import("@/lib/scan-dispatch");
+      await dispatchScan({
+        scanJobId: job.id,
+        projectId: project.id,
+        repoName: project.repo_name ?? project.id,
+        branch: project.branch ?? "main",
+        githubToken: user.github_token,
+      });
+      results.push({ projectId: project.id, status: "scan_started" });
+    } catch (err) {
       console.error("[webhook] Scan dispatch failed:", err);
-      createAdminClient()
+      await db
         .from("scan_jobs")
         .update({
           status: "failed",
           finished_at: new Date().toISOString(),
-          result: { error: "Failed to start scan: " + String(err) },
+          result: { error: "Dispatch failed: " + String(err) },
         })
-        .eq("id", job.id)
-        .then(undefined, () => {});
-    });
-
-    results.push({ projectId: project.id, status: "scan_started" });
+        .eq("id", job.id);
+      await db.from("projects").update({ status: "active" }).eq("id", project.id);
+      results.push({ projectId: project.id, status: "dispatch_failed" });
+    }
   }
 
   return NextResponse.json({ ok: true, results });

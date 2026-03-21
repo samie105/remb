@@ -345,13 +345,71 @@ const CHAT_TOOLS: OpenAI.ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "show_plan_tree",
+      description: "Display a plan as an interactive tree panel alongside the chat. Use when the user asks to see a plan visually, or after creating a plan with phases.",
+      parameters: {
+        type: "object",
+        properties: {
+          plan_id: { type: "string", description: "Plan UUID to display" },
+        },
+        required: ["plan_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "show_architecture",
+      description: "Generate and display an architecture diagram panel alongside the chat. Use when the user asks about architecture, system design, or component relationships. Generate nodes (components) and edges (connections) from project context.",
+      parameters: {
+        type: "object",
+        properties: {
+          project_id: { type: "string", description: "Project UUID to generate architecture for" },
+          focus: { type: "string", description: "Optional area to focus on (e.g., 'auth flow', 'data pipeline', 'API layer')" },
+        },
+        required: ["project_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "show_diagram",
+      description: "Display a Mermaid diagram panel alongside the chat. Use when the user asks for a flowchart, sequence diagram, ER diagram, or any visual diagram. Generate valid Mermaid syntax.",
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "Diagram title" },
+          code: { type: "string", description: "Valid Mermaid diagram code (flowchart, sequence, class, ER, etc.)" },
+        },
+        required: ["title", "code"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "trigger_scan",
+      description: "Trigger a code scan for a project. Use when the user asks to rescan, refresh, or update their project's context.",
+      parameters: {
+        type: "object",
+        properties: {
+          project_id: { type: "string", description: "Project UUID to scan" },
+        },
+        required: ["project_id"],
+      },
+    },
+  },
 ];
 
 async function executeTool(
   toolName: string,
   args: Record<string, unknown>,
   userId: string,
-): Promise<{ result: string; action?: { type: string; payload?: string } }> {
+): Promise<{ result: string; action?: { type: string; payload?: string }; panel?: { id: string; type: string; title: string; data: Record<string, unknown> } }> {
   const db = createAdminClient();
 
   switch (toolName) {
@@ -650,6 +708,225 @@ async function executeTool(
       });
       return { result: `Related conversation threads:\n\n${lines.join("\n\n")}` };
     }
+    case "show_plan_tree": {
+      const planId = args.plan_id as string;
+      const { data: plan } = await db
+        .from("plans")
+        .select("id, title, description, status")
+        .eq("id", planId)
+        .eq("user_id", userId)
+        .single();
+
+      if (!plan) return { result: "Plan not found." };
+
+      const { data: phases } = await db
+        .from("plan_phases")
+        .select("id, title, description, status, sort_order")
+        .eq("plan_id", planId)
+        .order("sort_order");
+
+      return {
+        result: `Showing plan "${plan.title}" with ${phases?.length ?? 0} phases.`,
+        action: { type: "panel" },
+        panel: {
+          id: `plan-${planId}`,
+          type: "plan",
+          title: plan.title,
+          data: {
+            title: plan.title,
+            description: plan.description,
+            phases: (phases ?? []).map((p) => ({
+              id: p.id,
+              title: p.title,
+              description: p.description,
+              status: p.status ?? "pending",
+            })),
+          },
+        },
+      };
+    }
+    case "show_architecture": {
+      const projectId = args.project_id as string;
+      const focus = args.focus as string | undefined;
+
+      const { data: proj } = await db
+        .from("projects")
+        .select("id, name, repo_name")
+        .eq("id", projectId)
+        .eq("user_id", userId)
+        .single();
+
+      if (!proj) return { result: "Project not found." };
+
+      // Build architecture from file dependencies
+      const { data: deps } = await db
+        .from("file_dependencies")
+        .select("source_path, target_path, import_type")
+        .eq("project_id", projectId)
+        .limit(200);
+
+      const { data: features } = await db
+        .from("features")
+        .select("id, name, description, status")
+        .eq("project_id", projectId)
+        .eq("status", "active")
+        .limit(20);
+
+      // Group files into architectural layers
+      const allPaths = new Set<string>();
+      for (const d of deps ?? []) {
+        allPaths.add(d.source_path);
+        allPaths.add(d.target_path);
+      }
+
+      const layerClassify = (p: string): string => {
+        if (p.startsWith("app/api/") || p.startsWith("pages/api/")) return "backend";
+        if (p.startsWith("app/") || p.startsWith("pages/") || p.startsWith("components/")) return "frontend";
+        if (p.includes("supabase") || p.includes("prisma") || p.includes("drizzle") || p.endsWith(".sql")) return "database";
+        if (p.startsWith("lib/") || p.startsWith("utils/") || p.startsWith("helpers/")) return "service";
+        if (p.startsWith("trigger/") || p.startsWith("workers/") || p.startsWith("jobs/")) return "service";
+        return "service";
+      };
+
+      // Group by directory for cleaner nodes
+      const dirGroups = new Map<string, { paths: string[]; layer: string }>();
+      for (const p of allPaths) {
+        const parts = p.split("/");
+        const dir = parts.length > 1 ? parts.slice(0, 2).join("/") : parts[0];
+        if (!dirGroups.has(dir)) {
+          dirGroups.set(dir, { paths: [], layer: layerClassify(p) });
+        }
+        dirGroups.get(dir)!.paths.push(p);
+      }
+
+      // Filter by focus if provided
+      let filteredDirs = [...dirGroups.entries()];
+      if (focus) {
+        const focusLower = focus.toLowerCase();
+        filteredDirs = filteredDirs.filter(([dir, info]) =>
+          dir.toLowerCase().includes(focusLower) ||
+          info.paths.some((p) => p.toLowerCase().includes(focusLower))
+        );
+        // If focus filter is too aggressive, fall back to all
+        if (filteredDirs.length < 2) filteredDirs = [...dirGroups.entries()];
+      }
+
+      const nodes = filteredDirs.slice(0, 20).map(([dir, info]) => ({
+        id: dir,
+        label: dir,
+        type: info.layer,
+        description: `${info.paths.length} files`,
+      }));
+
+      const nodeIds = new Set(nodes.map((n) => n.id));
+      const edgeMap = new Map<string, { source: string; target: string; count: number }>();
+      for (const d of deps ?? []) {
+        const sourceDir = d.source_path.split("/").slice(0, 2).join("/");
+        const targetDir = d.target_path.split("/").slice(0, 2).join("/");
+        if (sourceDir !== targetDir && nodeIds.has(sourceDir) && nodeIds.has(targetDir)) {
+          const key = `${sourceDir}->${targetDir}`;
+          if (!edgeMap.has(key)) edgeMap.set(key, { source: sourceDir, target: targetDir, count: 0 });
+          edgeMap.get(key)!.count++;
+        }
+      }
+
+      const edges = [...edgeMap.values()].map((e) => ({
+        source: e.source,
+        target: e.target,
+        label: e.count > 1 ? `${e.count} imports` : undefined,
+      }));
+
+      return {
+        result: `Architecture for **${proj.name}**${focus ? ` (focused on "${focus}")` : ""}: ${nodes.length} components, ${edges.length} connections.${features?.length ? `\n\nActive features: ${features.map((f) => f.name).join(", ")}` : ""}`,
+        action: { type: "panel" },
+        panel: {
+          id: `arch-${projectId}`,
+          type: "architecture",
+          title: `${proj.name} Architecture`,
+          data: {
+            title: `${proj.name} Architecture`,
+            description: focus ? `Focused on: ${focus}` : "Full project architecture",
+            nodes,
+            edges,
+          },
+        },
+      };
+    }
+    case "show_diagram": {
+      const title = args.title as string;
+      const code = args.code as string;
+
+      return {
+        result: `Showing diagram: "${title}"`,
+        action: { type: "panel" },
+        panel: {
+          id: `diagram-${Date.now()}`,
+          type: "mermaid",
+          title,
+          data: { title, code },
+        },
+      };
+    }
+    case "trigger_scan": {
+      const projectId = args.project_id as string;
+      const { data: proj } = await db
+        .from("projects")
+        .select("id, name, repo_name, branch")
+        .eq("id", projectId)
+        .eq("user_id", userId)
+        .single();
+
+      if (!proj) return { result: "Project not found." };
+      if (!proj.repo_name) return { result: "No repository connected to this project." };
+
+      // Check for existing running scan
+      const { data: running } = await db
+        .from("scan_jobs")
+        .select("id")
+        .eq("project_id", projectId)
+        .eq("status", "running")
+        .limit(1)
+        .single();
+
+      if (running) return { result: `A scan is already running for ${proj.name}.` };
+
+      try {
+        // Get user's GitHub token
+        const { data: userRow } = await db
+          .from("users")
+          .select("github_token")
+          .eq("id", userId)
+          .single();
+
+        if (!userRow?.github_token) return { result: "No GitHub token found. Please reconnect your GitHub account." };
+
+        // Create scan job
+        const { data: job, error: jobErr } = await db
+          .from("scan_jobs")
+          .insert({ project_id: projectId, status: "running" })
+          .select("id")
+          .single();
+
+        if (jobErr || !job) return { result: "Failed to create scan job." };
+
+        const { dispatchScan } = await import("@/lib/scan-dispatch");
+        await dispatchScan({
+          scanJobId: job.id,
+          projectId,
+          repoName: proj.repo_name,
+          branch: proj.branch ?? "main",
+          githubToken: userRow.github_token,
+        });
+
+        const slug = proj.repo_name.split("/")[1] ?? proj.name;
+        return {
+          result: `Scan triggered for **${proj.name}**. Job ID: ${job.id}`,
+          action: { type: "navigate", payload: `/dashboard/${slug}/scan` },
+        };
+      } catch {
+        return { result: `Failed to trigger scan for ${proj.name}.` };
+      }
+    }
     default:
       return { result: `Unknown tool: ${toolName}` };
   }
@@ -760,6 +1037,10 @@ ${contextProject ? `The user is currently on the **${contextProject.name}** proj
 - **search_memories** — semantic search across all memories. Find past decisions, patterns, gotchas, and preferences.
 - **get_impact_analysis** — analyze what code/features would be affected by changing a file or feature. Shows downstream consumers and dependencies.
 - **get_thread_history** — find past conversation threads related to a topic. Use when the user references prior discussions.
+- **show_plan_tree** — display a plan as an interactive visual tree panel. Use after creating or finding a plan.
+- **show_architecture** — generate and show an architecture diagram from project structure. Use when asked about architecture or system design.
+- **show_diagram** — render any Mermaid diagram (flowchart, sequence, ER, class, etc.) in a side panel. Use when the user asks for visual diagrams.
+- **trigger_scan** — rescan a project's codebase. Use when the user asks to refresh or update project context.
 
 ## Smart behavior
 1. **When the user asks about "this project"** — you ALREADY have the current project context below. ${contextProject ? `Use get_project_context with id "${contextProject.id}" if you need deeper info.` : "Ask them to specify which project or navigate to one."}
@@ -930,9 +1211,13 @@ ${projectList || "No projects yet."}${projectContextSection}${globalMemorySectio
 
             send("tool_call", { name: tc.name, args });
 
-            const { result, action } = await executeTool(tc.name, args, userId);
+            const { result, action, panel } = await executeTool(tc.name, args, userId);
 
             send("tool_result", { name: tc.name, result, action });
+
+            if (panel) {
+              send("panel", panel);
+            }
 
             currentMessages.push({
               role: "tool",

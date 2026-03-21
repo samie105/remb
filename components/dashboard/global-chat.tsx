@@ -19,6 +19,9 @@ import {
   File01Icon,
   Attachment01Icon,
   FolderLibraryIcon,
+  StructureCheckIcon,
+  FlowIcon,
+  AnalyticsUpIcon,
 } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
 import { useTheme } from "next-themes";
@@ -38,6 +41,7 @@ import {
   addUploadedFile,
   removeUploadedFile,
   removeContextFile,
+  setPanel,
   type ChatMessage,
   type DetectedProject,
   type ContextFile,
@@ -49,6 +53,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { FileContextPicker } from "@/components/dashboard/plan/file-context-picker";
+import { ChatPanelRenderer } from "@/components/dashboard/chat-panel";
 
 /* ─── tool call types ─── */
 
@@ -72,6 +77,14 @@ const TOOL_META: Record<string, { label: string; icon: typeof SparklesIcon; colo
   create_plan: { label: "Creating plan", icon: PlusSignCircleIcon, color: "blue" },
   create_phase: { label: "Creating phase", icon: PlusSignCircleIcon, color: "emerald" },
   list_plans: { label: "Listing plans", icon: Layers01Icon, color: "zinc" },
+  query_knowledge_graph: { label: "Querying knowledge graph", icon: Search01Icon, color: "purple" },
+  search_memories: { label: "Searching memories", icon: Search01Icon, color: "emerald" },
+  get_impact_analysis: { label: "Analyzing impact", icon: AnalyticsUpIcon, color: "amber" },
+  get_thread_history: { label: "Loading thread history", icon: Search01Icon, color: "zinc" },
+  show_plan_tree: { label: "Showing plan", icon: Layers01Icon, color: "blue" },
+  show_architecture: { label: "Generating architecture", icon: StructureCheckIcon, color: "purple" },
+  show_diagram: { label: "Rendering diagram", icon: FlowIcon, color: "emerald" },
+  trigger_scan: { label: "Triggering scan", icon: AnalyticsUpIcon, color: "amber" },
 };
 
 const COLOR_MAP: Record<string, { border: string; bg: string; text: string; icon: string }> = {
@@ -404,6 +417,11 @@ export function GlobalChat() {
                 case "error":
                   updateLastAssistantMessage(`Error: ${data.message}`);
                   break;
+                case "panel":
+                  setPanel(data as { id: string; type: "plan" | "architecture" | "mermaid"; title: string; data: Record<string, unknown> });
+                  // Auto-expand to full if showing a panel in mini mode
+                  if (chat.windowState === "mini") expandChat();
+                  break;
               }
             } catch {
               /* skip malformed */
@@ -726,9 +744,13 @@ export function GlobalChat() {
           </div>
         </div>
 
-        {/* Messages */}
-        <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
-          <div className="mx-auto max-w-2xl px-6 py-6 space-y-4">
+        {/* Main content + panel */}
+        <div className="flex flex-1 overflow-hidden">
+          {/* Chat column */}
+          <div className="flex flex-1 flex-col overflow-hidden">
+            {/* Messages */}
+            <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
+              <div className="mx-auto max-w-2xl px-6 py-6 space-y-4">
             {chat.messages.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-24 gap-4">
                 <div className="flex size-14 items-center justify-center rounded-2xl bg-foreground/5">
@@ -898,6 +920,10 @@ export function GlobalChat() {
               </div>
             </div>
           </div>
+        </div>
+          </div>
+          {/* Side panel */}
+          <ChatPanelRenderer />
         </div>
 
         {/* Hidden file input */}

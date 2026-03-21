@@ -104,6 +104,8 @@ $$;
 
 
 -- 2b. Multi-hop traversal using recursive CTE (max 4 hops)
+-- Uses plpgsql + cross join lateral to combine outgoing/incoming in one recursive step
+-- (PostgreSQL doesn't allow multiple recursive references in a single CTE)
 create or replace function get_related_entities(
   p_user_id         uuid,
   p_entity_type     text,
@@ -120,8 +122,10 @@ returns table (
   confidence    float,
   path          text[]
 )
-language sql stable
+language plpgsql stable
 as $$
+begin
+  return query
   with recursive traversal as (
     -- Seed: the starting entity
     select
@@ -134,44 +138,39 @@ as $$
 
     union all
 
-    -- Expand outgoing
+    -- Expand both directions via lateral subquery
     select
       t.hop + 1,
-      er.target_type,
-      er.target_id,
-      er.relation,
-      t.confidence * er.confidence,  -- decay confidence through hops
-      t.path || (er.target_type || ':' || er.target_id::text)
+      nb.related_type,
+      nb.related_id,
+      nb.relation,
+      t.confidence * nb.conf,
+      t.path || (nb.related_type || ':' || nb.related_id::text)
     from traversal t
-    join entity_relations er
-      on er.source_type = t.entity_type
-      and er.source_id = t.entity_id
-      and er.user_id = p_user_id
+    cross join lateral (
+      -- Outgoing
+      select er.target_type as related_type, er.target_id as related_id, er.relation, er.confidence as conf
+      from entity_relations er
+      where er.source_type = t.entity_type
+        and er.source_id = t.entity_id
+        and er.user_id = p_user_id
+        and (p_project_id is null or er.project_id = p_project_id)
+        and (p_relation_filter is null or er.relation = p_relation_filter)
+
+      union all
+
+      -- Incoming
+      select er.source_type, er.source_id, er.relation, er.confidence
+      from entity_relations er
+      where er.target_type = t.entity_type
+        and er.target_id = t.entity_id
+        and er.user_id = p_user_id
+        and (p_project_id is null or er.project_id = p_project_id)
+        and (p_relation_filter is null or er.relation = p_relation_filter)
+    ) nb
     where t.hop < least(p_max_hops, 4)  -- hard cap at 4 hops
-      and (p_project_id is null or er.project_id = p_project_id)
-      and (p_relation_filter is null or er.relation = p_relation_filter)
       -- Prevent cycles
-      and not (er.target_type || ':' || er.target_id::text) = any(t.path)
-
-    union all
-
-    -- Expand incoming
-    select
-      t.hop + 1,
-      er.source_type,
-      er.source_id,
-      er.relation,
-      t.confidence * er.confidence,
-      t.path || (er.source_type || ':' || er.source_id::text)
-    from traversal t
-    join entity_relations er
-      on er.target_type = t.entity_type
-      and er.target_id = t.entity_id
-      and er.user_id = p_user_id
-    where t.hop < least(p_max_hops, 4)
-      and (p_project_id is null or er.project_id = p_project_id)
-      and (p_relation_filter is null or er.relation = p_relation_filter)
-      and not (er.source_type || ':' || er.source_id::text) = any(t.path)
+      and not (nb.related_type || ':' || nb.related_id::text) = any(t.path)
   )
   select
     t.hop,
@@ -183,6 +182,7 @@ as $$
   from traversal t
   where t.hop > 0  -- exclude the seed entity
   order by t.hop, t.confidence desc;
+end;
 $$;
 
 

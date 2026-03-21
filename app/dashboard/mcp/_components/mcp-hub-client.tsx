@@ -470,6 +470,72 @@ function ConnectIdeModal({
   );
 }
 
+/* ─── Quick-connect IDE buttons ─── */
+
+function QuickConnectBar({
+  endpointUrl,
+  onMoreIDEs,
+}: {
+  endpointUrl: string;
+  onMoreIDEs: () => void;
+}) {
+  const [copiedId, setCopiedId] = React.useState<string | null>(null);
+
+  const quickCopy = (id: string, config: string) => {
+    navigator.clipboard.writeText(config);
+    setCopiedId(id);
+    addNotification({
+      title: "Config copied",
+      message: `Paste into your ${id === "cursor" ? "~/.cursor/mcp.json" : ".vscode/mcp.json"} file`,
+      type: "success",
+    });
+    setTimeout(() => setCopiedId(null), 3000);
+  };
+
+  const cursorConfig = JSON.stringify(
+    { mcpServers: { remb: { type: "http", url: endpointUrl } } },
+    null,
+    2,
+  );
+  const vscodeConfig = JSON.stringify(
+    { servers: { remb: { type: "http", url: endpointUrl } } },
+    null,
+    2,
+  );
+
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      <span className="text-[11px] text-muted-foreground mr-1">Add to:</span>
+      <Button
+        variant="outline"
+        size="sm"
+        className="h-7 text-xs gap-1.5 px-2.5"
+        onClick={() => quickCopy("cursor", cursorConfig)}
+      >
+        <CursorLogo className="size-3.5" />
+        {copiedId === "cursor" ? "Copied!" : "Cursor"}
+      </Button>
+      <Button
+        variant="outline"
+        size="sm"
+        className="h-7 text-xs gap-1.5 px-2.5"
+        onClick={() => quickCopy("vscode", vscodeConfig)}
+      >
+        <VSCodeLogo className="size-3.5" />
+        {copiedId === "vscode" ? "Copied!" : "VS Code"}
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-7 text-xs gap-1 text-muted-foreground px-2"
+        onClick={onMoreIDEs}
+      >
+        Windsurf, Zed, Neovim&hellip;
+      </Button>
+    </div>
+  );
+}
+
 /* ─── Auth Required Modal ─── */
 
 function AuthRequiredModal({
@@ -1139,6 +1205,9 @@ export function McpHubClient({
           </Button>
         </div>
       </div>
+
+      {/* ─── Quick connect buttons ─── */}
+      <QuickConnectBar endpointUrl={endpointUrl} onMoreIDEs={() => setShowIdeModal(true)} />
 
       {/* ─── Stats row ─── */}
       {servers.length > 0 && (

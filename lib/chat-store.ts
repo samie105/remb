@@ -6,6 +6,15 @@ import * as React from "react";
 
 export type ChatWindowState = "pill" | "mini" | "full";
 
+export type PanelType = "plan" | "architecture" | "mermaid";
+
+export interface ChatPanel {
+  id: string;
+  type: PanelType;
+  title: string;
+  data: Record<string, unknown>;
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "system";
@@ -40,6 +49,7 @@ interface ChatState {
   activeProjectId: string | null;
   contextFiles: ContextFile[];
   uploadedFiles: UploadedFile[];
+  panel: ChatPanel | null;
 }
 
 /* ─── External store (singleton) ─── */
@@ -53,6 +63,7 @@ let state: ChatState = {
   activeProjectId: null,
   contextFiles: [],
   uploadedFiles: [],
+  panel: null,
 };
 
 function emitChange() {
@@ -78,6 +89,7 @@ const serverSnapshot: ChatState = {
   activeProjectId: null,
   contextFiles: [],
   uploadedFiles: [],
+  panel: null,
 };
 
 function getServerSnapshot() {
@@ -170,6 +182,22 @@ export function removeContextFile(path: string) {
 
 export function clearAllContext() {
   state = { ...state, contextFiles: [], uploadedFiles: [] };
+  emitChange();
+}
+
+export function setPanel(panel: ChatPanel | null) {
+  state = { ...state, panel };
+  emitChange();
+}
+
+export function updatePanelData(data: Record<string, unknown>) {
+  if (!state.panel) return;
+  state = { ...state, panel: { ...state.panel, data: { ...state.panel.data, ...data } } };
+  emitChange();
+}
+
+export function closePanel() {
+  state = { ...state, panel: null };
   emitChange();
 }
 
