@@ -23,12 +23,12 @@ import type { ImportContext } from "@/lib/openai";
 import { extractImports, getInternalImports } from "@/lib/import-parser";
 import type { ScanLogEntry, ScanResult } from "@/lib/scan-actions";
 
-/** Maximum files to process in a single scan pass. Kept low to avoid OOM on
- *  Trigger.dev workers — the continuation system chains multiple passes. */
+/** Maximum files to process in a single scan pass. Batches of 100 keep
+ *  memory usage low on medium-2x machines. Continuation chains handle the rest. */
 const MAX_FILES = 100;
 
 /** Maximum number of automatic continuation passes to prevent runaway loops.
- *  At 100 files/pass this supports repos up to ~1000 files. */
+ *  At 100 files/pass this supports repos up to ~1000 scannable files. */
 const MAX_CONTINUATION_PASSES = 10;
 
 /** Retry an async operation up to `maxAttempts` times with exponential back-off. */
@@ -74,6 +74,12 @@ export async function runScan(
   const fileToFeatureId = new Map<string, string>();
   /** All file paths in the repo — used by import parser to resolve relative paths */
   let fileIndex = new Set<string>();
+
+  // ── Chain tracking: read metadata set by scheduleContinuationScan ──
+  const { data: jobMetaRow } = await db.from("scan_jobs").select("result").eq("id", scanJobId).single();
+  const existingMeta = jobMetaRow?.result as Record<string, unknown> | null;
+  const chainId = (existingMeta?._chain_id as string) ?? scanJobId;
+  const batchNumber = (existingMeta?._pass_number as number) ?? 1;
 
   // ── Persist intermediate state so the UI can poll progress ──────────────────
   function buildJobResult(partial: Partial<ScanResult>): Record<string, unknown> {
@@ -880,6 +886,8 @@ export async function runScan(
       commit_sha: commitSha,
       feature_ids: [...featureIdSet],
       files_remaining: filesRemaining,
+      _chain_id: chainId,
+      _batch_number: batchNumber,
     };
 
     await db
@@ -889,7 +897,7 @@ export async function runScan(
 
     // ── Auto-continuation: if files were capped, dispatch a follow-up scan ──
     if (filesRemaining > 0) {
-      await scheduleContinuationScan(db, scanJobId, projectId, repoName, branch, githubToken, logs);
+      await scheduleContinuationScan(db, scanJobId, projectId, repoName, branch, githubToken, logs, chainId);
     } else {
       await db.from("projects").update({ status: "active" }).eq("id", projectId);
     }
@@ -941,9 +949,9 @@ export async function runScan(
 
 /**
  * Schedule a continuation scan to pick up files that were skipped due to MAX_FILES cap.
- * Creates a new scan_jobs row and dispatches it. The continuation scan will
- * naturally pick up only the remaining files because already-scanned files
- * match their SHA in the smart-scan dedup check.
+ * Creates a QUEUED scan_jobs row with dispatch metadata, then hits the
+ * process-queue endpoint which will pick it up with proper GitHub token
+ * resolution and Trigger.dev dispatch.
  */
 async function scheduleContinuationScan(
   db: ReturnType<typeof createAdminClient>,
@@ -951,8 +959,9 @@ async function scheduleContinuationScan(
   projectId: string,
   repoName: string,
   branch: string,
-  githubToken: string,
+  _githubToken: string,
   parentLogs: ScanLogEntry[],
+  chainId: string,
 ): Promise<void> {
   try {
     // Count how many continuation passes have already occurred for this chain
@@ -976,28 +985,31 @@ async function scheduleContinuationScan(
         timestamp: new Date().toISOString(),
         file: "",
         status: "skipped",
-        message: `Reached max continuation passes (${MAX_CONTINUATION_PASSES}). Remaining files will be picked up on next manual scan.`,
+        message: `Reached max continuation batches (${MAX_CONTINUATION_PASSES}). Remaining files will be picked up on next manual scan.`,
       });
       await db.from("projects").update({ status: "active" }).eq("id", projectId);
       return;
     }
 
-    // Create continuation scan job — bypasses user auth since this is server-to-server
+    // Create a QUEUED scan job with dispatch metadata so the process-queue
+    // endpoint can pick it up, resolve the GitHub token, and dispatch it.
     const { data: job, error } = await db
       .from("scan_jobs")
       .insert({
         project_id: projectId,
-        status: "running" as const,
+        status: "queued" as const,
         triggered_by: "webhook" as const,
-        started_at: new Date().toISOString(),
         result: {
           _continuation_of: parentJobId,
-          _pass_number: passCount + 2, // parent was pass 1 (or passCount+1)
+          _chain_id: chainId,
+          _pass_number: passCount + 2,
+          _dispatch_repo: repoName,
+          _dispatch_branch: branch,
           logs: [{
             timestamp: new Date().toISOString(),
             file: "",
             status: "scanning",
-            message: `Continuation scan (pass ${passCount + 2}) — picking up remaining files`,
+            message: `Continuation scan (batch ${passCount + 2}) queued — picking up remaining files`,
           }],
         },
       })
@@ -1005,25 +1017,19 @@ async function scheduleContinuationScan(
       .single();
 
     if (error || !job) {
+      console.error("[scan-runner] Failed to create continuation job:", error);
       await db.from("projects").update({ status: "active" }).eq("id", projectId);
       return;
     }
 
-    // Dispatch the continuation scan
-    const { dispatchScan } = await import("@/lib/scan-dispatch");
-    await dispatchScan({
-      scanJobId: job.id,
-      projectId,
-      repoName,
-      branch,
-      githubToken,
-    });
+    // Trigger queue processing — the process-queue endpoint will dispatch it
+    triggerQueueProcessing();
 
     parentLogs.push({
       timestamp: new Date().toISOString(),
       file: "",
       status: "scanning",
-      message: `Continuation scan dispatched (pass ${passCount + 2}) to index remaining files`,
+      message: `Continuation scan queued (batch ${passCount + 2}) to index remaining files`,
     });
   } catch (err) {
     console.error("[scan-runner] Failed to schedule continuation scan:", err);

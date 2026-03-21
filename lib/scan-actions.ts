@@ -44,6 +44,12 @@ export type ScanResult = {
   _max_duration?: number;
   _estimated_files?: number;
   _estimated_size_kb?: number;
+  /* ── Chain/batch metadata (for multi-batch scans) ── */
+  _chain_id?: string;
+  _batch_number?: number;
+  _continuation_of?: string;
+  _is_smart_scan?: boolean;
+  _estimated_changed_files?: number;
 };
 
 const STALE_SCAN_MS = 15 * 60 * 1000;
@@ -374,6 +380,65 @@ export async function getScanJob(scanJobId: string): Promise<ScanJobWithProject 
   if (!project) return null;
 
   return { ...job, project_name: project.name, project_slug: project.slug };
+}
+
+/** Get all scan jobs in a batch chain (multi-batch scans linked by _chain_id). */
+export async function getScanChain(scanJobId: string): Promise<ScanJobRow[]> {
+  const session = await getSession();
+  if (!session) throw new Error("Not authenticated");
+
+  const db = createAdminClient();
+
+  const { data: job } = await db
+    .from("scan_jobs")
+    .select("*")
+    .eq("id", scanJobId)
+    .single();
+
+  if (!job) return [];
+
+  // Verify ownership
+  const { data: project } = await db
+    .from("projects")
+    .select("id")
+    .eq("id", job.project_id)
+    .eq("user_id", session.dbUser.id)
+    .single();
+
+  if (!project) return [];
+
+  const result = job.result as Record<string, unknown> | null;
+  const chainId = (result?._chain_id as string) ?? null;
+
+  // No chain = standalone scan
+  if (!chainId) return [job];
+
+  // Load all recent scans for this project and filter by chain_id
+  const { data: allJobs } = await db
+    .from("scan_jobs")
+    .select("*")
+    .eq("project_id", job.project_id)
+    .order("created_at", { ascending: true })
+    .limit(30);
+
+  if (!allJobs) return [job];
+
+  // Filter by chain membership: either the job IS the chain root, or has _chain_id matching
+  return allJobs.filter((j) => {
+    if (j.id === chainId) return true;
+    const r = j.result as Record<string, unknown> | null;
+    return r?._chain_id === chainId;
+  });
+}
+
+/** Cancel all running/queued scans in a chain. Stops the entire batch sequence. */
+export async function cancelScanChain(scanJobId: string): Promise<void> {
+  const chain = await getScanChain(scanJobId);
+  for (const job of chain) {
+    if (job.status === "running" || job.status === "queued") {
+      await cancelScanJob(job.id);
+    }
+  }
 }
 
 /** Get features and context entries associated with a specific scan job. */

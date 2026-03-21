@@ -251,6 +251,11 @@ export function ScannerSection({ project }: ScannerSectionProps) {
   const latestResult = latestJob?.result as Record<string, number> | null;
   const isLatestRunning = latestJob?.status === "running" || latestJob?.status === "queued";
 
+  // Detect if latest running scan is part of a chain
+  const chainId = (latestResult as Record<string, unknown> | null)?._chain_id as string | undefined;
+  const batchNumber = ((latestResult as Record<string, unknown> | null)?._batch_number as number) ?? ((latestResult as Record<string, unknown> | null)?._pass_number as number);
+  const isChainScan = chainId && batchNumber && batchNumber > 1;
+
   return (
     <motion.div
       variants={container}
@@ -272,6 +277,11 @@ export function ScannerSection({ project }: ScannerSectionProps) {
                   <div>
                     <div className="flex items-center gap-2">
                       <p className="text-[14px] font-semibold text-foreground">Scan in progress</p>
+                      {isChainScan && (
+                        <Badge variant="outline" className="h-4 text-[9px] px-1.5 border-border/40 font-mono">
+                          Batch {batchNumber}
+                        </Badge>
+                      )}
                       {latestResult?._is_smart_scan && (
                         <Badge variant="outline" className="h-4 text-[9px] px-1.5 border-blue-500/30 text-blue-600 dark:text-blue-400">
                           Smart Scan
@@ -290,7 +300,7 @@ export function ScannerSection({ project }: ScannerSectionProps) {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Button size="sm" variant="outline" className="gap-1.5" onClick={() => navigateToScan(latestJob.id)}>
+                  <Button size="sm" variant="outline" className="gap-1.5" onClick={() => navigateToScan(chainId ?? latestJob.id)}>
                     View Live
                     <HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={2} className="size-3" />
                   </Button>

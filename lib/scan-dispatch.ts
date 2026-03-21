@@ -86,18 +86,18 @@ async function getChangedFileCount(
 type MachinePreset = "small-1x" | "small-2x" | "medium-1x" | "medium-2x" | "large-1x" | "large-2x";
 
 /**
- * Pick machine size + maxDuration based on estimated file count for THIS pass.
- * Each pass processes at most 100 files (MAX_FILES in scan-runner.ts).
+ * Pick machine size + maxDuration based on estimated file count.
+ *
+ * Batches are capped at 100 files, so medium-2x is the max needed.
+ * Smaller repos get smaller machines to save resources.
  *
  * Strategy:
- * - ≤50 changed files: small machine, 4 min
- * - ≤100 changed files: medium machine, 6 min
- * - >100 (first pass before cap): medium machine, 8 min
+ * - ≤50 files: small machine, 4 min
+ * - >50 files: medium machine, 6 min
  */
 function pickMachineConfig(fileCount: number): { machine: MachinePreset; maxDuration: number } {
   if (fileCount <= 50) return { machine: "small-2x", maxDuration: 240 };
-  if (fileCount <= 100) return { machine: "medium-2x", maxDuration: 360 };
-  return { machine: "medium-2x", maxDuration: 480 };
+  return { machine: "medium-2x", maxDuration: 360 };
 }
 
 /**

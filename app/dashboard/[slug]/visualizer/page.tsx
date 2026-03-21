@@ -83,8 +83,8 @@ export default function VisualizerPage() {
         </div>
       </div>
 
-      {/* Graph Area */}
-      <div className="rounded-xl border border-border/50 overflow-hidden" style={{ height: "calc(100dvh - 220px)", minHeight: 300 }}>
+      {/* Graph Area — takes all remaining viewport height */}
+      <div className="rounded-xl border border-border/50 overflow-hidden" style={{ height: "calc(100dvh - 180px)", minHeight: 500 }}>
         {isLoading && (
           <div className="flex items-center justify-center h-full bg-muted/20">
             <div className="flex items-center gap-2 text-muted-foreground">

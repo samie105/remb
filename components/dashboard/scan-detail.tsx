@@ -29,13 +29,17 @@ import {
 } from "@/components/ui/dialog";
 import {
   getScanJob,
+  getScanChain,
   getScanFeatures,
+  cancelScanChain,
   type ScanJobWithProject,
   type ScanLogEntry,
   type ScanResult,
 } from "@/lib/scan-actions";
+import { addNotification } from "@/components/dashboard/notification-center";
 import { TechStackIcons } from "@/components/dashboard/tech-stack-icons";
 import { groupScanFeaturesByImportance, type ImportanceTier } from "@/lib/smart-grouping";
+import type { ScanJobRow } from "@/lib/supabase/types";
 
 /* ─── types ─── */
 type ScanFeature = Awaited<ReturnType<typeof getScanFeatures>>[number];
@@ -98,6 +102,161 @@ const TIER_ICONS: Record<ImportanceTier, typeof Layers01Icon> = {
   low: CodeIcon,
 };
 
+/* ─── Timeline Component ─── */
+function ScanTimeline({ chain }: { chain: ScanJobRow[] }) {
+  return (
+    <div className="relative">
+      {chain.map((batchJob, i) => {
+        const r = batchJob.result as ScanResult | null;
+        const batchNum = (r?._batch_number as number) ?? i + 1;
+        const isDone = batchJob.status === "done";
+        const isActive = batchJob.status === "running";
+        const isQueued = batchJob.status === "queued";
+        const isBatchFailed = batchJob.status === "failed";
+        const isLast = i === chain.length - 1;
+
+        const filesScanned = r?.files_scanned ?? 0;
+        const featCount = r?.features_created ?? 0;
+        const entCount = r?.entries_created ?? 0;
+        const batchDuration = r?.duration_ms ?? null;
+        const errCount = r?.errors ?? 0;
+        const filesRemaining = r?.files_remaining ?? 0;
+
+        return (
+          <div key={batchJob.id} className="flex gap-4">
+            {/* Timeline rail */}
+            <div className="flex flex-col items-center pt-0.5">
+              {/* Node */}
+              <div className="relative">
+                <div
+                  className={`size-3 rounded-full border-2 transition-all ${
+                    isDone
+                      ? "bg-emerald-500 border-emerald-500"
+                      : isActive
+                        ? "bg-blue-500 border-blue-500"
+                        : isBatchFailed
+                          ? "bg-red-500 border-red-500"
+                          : "bg-muted-foreground/20 border-muted-foreground/30"
+                  }`}
+                />
+                {isActive && (
+                  <div className="absolute inset-0 size-3 rounded-full bg-blue-500/40 animate-ping" />
+                )}
+              </div>
+              {/* Connector line */}
+              {!isLast && (
+                <div
+                  className={`w-px flex-1 min-h-6 ${
+                    isDone ? "bg-emerald-500/20" : "bg-border/50"
+                  }`}
+                />
+              )}
+            </div>
+
+            {/* Batch card */}
+            <div className="pb-4 flex-1 min-w-0">
+              <div
+                className={`rounded-xl border p-4 transition-all ${
+                  isActive
+                    ? "border-blue-500/30 bg-blue-500/5 shadow-sm shadow-blue-500/5"
+                    : isDone
+                      ? "border-emerald-500/15 bg-card"
+                      : isBatchFailed
+                        ? "border-red-500/20 bg-red-500/5"
+                        : "border-border/40 bg-card"
+                }`}
+              >
+                {/* Header */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[13px] font-semibold text-foreground">
+                      Batch {batchNum}
+                    </span>
+                    <Badge
+                      variant={
+                        isDone ? "secondary" : isActive ? "outline" : isBatchFailed ? "destructive" : "outline"
+                      }
+                      className={`h-4 text-[9px] px-1.5 ${
+                        isActive ? "border-blue-500/30 text-blue-600 dark:text-blue-400" : ""
+                      }`}
+                    >
+                      {isDone
+                        ? "Complete"
+                        : isActive
+                          ? "Running"
+                          : isBatchFailed
+                            ? "Failed"
+                            : isQueued
+                              ? "Queued"
+                              : batchJob.status}
+                    </Badge>
+                  </div>
+                  {batchDuration != null && batchDuration > 0 && (
+                    <span className="text-[11px] text-muted-foreground font-mono tabular-nums flex items-center gap-1">
+                      <HugeiconsIcon icon={Clock01Icon} strokeWidth={2} className="size-3" />
+                      {formatDuration(batchDuration)}
+                    </span>
+                  )}
+                </div>
+
+                {/* Stats row */}
+                <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-muted-foreground">
+                  <span className="flex items-center gap-1">
+                    <HugeiconsIcon icon={File01Icon} strokeWidth={2} className="size-3 text-muted-foreground/60" />
+                    <span className="font-medium text-foreground tabular-nums">{filesScanned}</span> files
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <HugeiconsIcon icon={Layers01Icon} strokeWidth={2} className="size-3 text-muted-foreground/60" />
+                    <span className="font-medium text-foreground tabular-nums">{featCount}</span> features
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <HugeiconsIcon icon={CodeIcon} strokeWidth={2} className="size-3 text-muted-foreground/60" />
+                    <span className="font-medium text-foreground tabular-nums">{entCount}</span> entries
+                  </span>
+                  {errCount > 0 && (
+                    <span className="flex items-center gap-1 text-red-500">
+                      <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} className="size-3" />
+                      <span className="font-medium tabular-nums">{errCount}</span> errors
+                    </span>
+                  )}
+                </div>
+
+                {/* Progress indicator for active batch */}
+                {isActive && r && (r.files_total ?? 0) > 0 && (
+                  <div className="mt-3">
+                    <div className="h-1 bg-blue-500/10 rounded-full overflow-hidden">
+                      <motion.div
+                        className="h-full bg-blue-500/60 rounded-full"
+                        initial={{ width: 0 }}
+                        animate={{ width: `${Math.min(100, (filesScanned / (r.files_total ?? 1)) * 100)}%` }}
+                        transition={{ duration: 0.5 }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Remaining files note */}
+                {isDone && filesRemaining > 0 && (
+                  <p className="mt-2 text-[11px] text-muted-foreground/60">
+                    {filesRemaining} files remaining → continued in next batch
+                  </p>
+                )}
+
+                {/* Failed error */}
+                {isBatchFailed && r?.error && (
+                  <p className="mt-2 text-[11px] text-red-500/80 truncate">
+                    {r.error}
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /* ─── Component ─── */
 interface ScanDetailProps {
   scanJobId: string;
@@ -108,8 +267,10 @@ interface ScanDetailProps {
 export function ScanDetail({ scanJobId, projectSlug, onBack }: ScanDetailProps) {
   const router = useRouter();
   const [job, setJob] = React.useState<ScanJobWithProject | null>(null);
+  const [chain, setChain] = React.useState<ScanJobRow[]>([]);
   const [features, setFeatures] = React.useState<ScanFeature[]>([]);
   const [isLoading, setIsLoading] = React.useState(true);
+  const [isStopping, setIsStopping] = React.useState(false);
   const [isTechModalOpen, setIsTechModalOpen] = React.useState(false);
   const [collapsedTiers, setCollapsedTiers] = React.useState<Set<string>>(new Set());
   const logEndRef = React.useRef<HTMLDivElement>(null);
@@ -133,13 +294,15 @@ export function ScanDetail({ scanJobId, projectSlug, onBack }: ScanDetailProps) 
     let cancelled = false;
     async function load() {
       try {
-        const [jobData, featuresData] = await Promise.all([
+        const [jobData, featuresData, chainData] = await Promise.all([
           getScanJob(scanJobId),
           getScanFeatures(scanJobId),
+          getScanChain(scanJobId),
         ]);
         if (!cancelled) {
           setJob(jobData);
           setFeatures(featuresData);
+          setChain(chainData);
         }
       } finally {
         if (!cancelled) setIsLoading(false);
@@ -150,20 +313,27 @@ export function ScanDetail({ scanJobId, projectSlug, onBack }: ScanDetailProps) 
   }, [scanJobId]);
 
   React.useEffect(() => {
-    if (!job || (job.status !== "running" && job.status !== "queued")) return;
+    // Poll while any scan in the chain is running
+    const chainIsRunning = chain.some((j) => j.status === "running" || j.status === "queued");
+    const jobIsRunning = job && (job.status === "running" || job.status === "queued");
+    if (!chainIsRunning && !jobIsRunning) return;
+
     const interval = setInterval(async () => {
-      const [jobData, featuresData] = await Promise.all([
+      const [jobData, featuresData, chainData] = await Promise.all([
         getScanJob(scanJobId),
         getScanFeatures(scanJobId),
+        getScanChain(scanJobId),
       ]);
       setJob(jobData);
       setFeatures(featuresData);
-      if (jobData && jobData.status !== "running" && jobData.status !== "queued") {
+      setChain(chainData);
+      const stillRunning = chainData.some((j) => j.status === "running" || j.status === "queued");
+      if (!stillRunning && jobData && jobData.status !== "running" && jobData.status !== "queued") {
         clearInterval(interval);
       }
     }, 3000);
     return () => clearInterval(interval);
-  }, [job?.status, scanJobId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [chain, job?.status, scanJobId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   React.useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -193,27 +363,105 @@ export function ScanDetail({ scanJobId, projectSlug, onBack }: ScanDetailProps) 
   const logs = result?.logs ?? [];
   const techStack = result?.tech_stack ?? [];
   const languages = result?.languages ?? {};
-  const isRunning = job.status === "running" || job.status === "queued";
-  const isFailed = job.status === "failed";
+
+  // ── Chain-aware state ──
+  const isChain = chain.length > 1;
+  const chainIsRunning = chain.some((j) => j.status === "running" || j.status === "queued");
+  const chainIsFailed = !chainIsRunning && chain.some((j) => j.status === "failed");
+  const chainIsDone = !chainIsRunning && !chainIsFailed && chain.every((j) => j.status === "done");
+
+  // Aggregate stats across all batches in the chain
+  const aggregated = React.useMemo(() => {
+    let filesTotal = 0;
+    let filesScanned = 0;
+    let featCount = 0;
+    let entCount = 0;
+    let errCount = 0;
+    let totalDuration = 0;
+    const allLogs: ScanLogEntry[] = [];
+    const allTechSet = new Set<string>();
+    const allLangs: Record<string, number> = {};
+
+    for (const j of chain) {
+      const r = j.result as ScanResult | null;
+      if (!r) continue;
+      filesTotal = Math.max(filesTotal, r.files_total ?? 0);
+      filesScanned += r.files_scanned ?? 0;
+      featCount += r.features_created ?? 0;
+      entCount += r.entries_created ?? 0;
+      errCount += r.errors ?? 0;
+      totalDuration += r.duration_ms ?? 0;
+      for (const log of r.logs ?? []) allLogs.push(log);
+      for (const t of r.tech_stack ?? []) allTechSet.add(t);
+      for (const [lang, count] of Object.entries(r.languages ?? {})) {
+        allLangs[lang] = (allLangs[lang] ?? 0) + count;
+      }
+    }
+
+    return {
+      filesTotal,
+      filesScanned,
+      featuresCreated: featCount,
+      entriesCreated: entCount,
+      errors: errCount,
+      duration: totalDuration,
+      logs: allLogs,
+      techStack: [...allTechSet],
+      languages: allLangs,
+    };
+  }, [chain]);
+
+  // Use aggregate for chains, single result for standalone
+  const displayResult = isChain ? aggregated : {
+    filesTotal: result?.files_total ?? 0,
+    filesScanned: result?.files_scanned ?? 0,
+    featuresCreated: result?.features_created ?? 0,
+    entriesCreated: result?.entries_created ?? 0,
+    errors: result?.errors ?? 0,
+    duration: result?.duration_ms ?? (
+      job.started_at && job.finished_at
+        ? new Date(job.finished_at).getTime() - new Date(job.started_at).getTime()
+        : 0
+    ),
+    logs: logs,
+    techStack: techStack,
+    languages: languages,
+  };
+
+  const isRunning = chainIsRunning || job.status === "running" || job.status === "queued";
+  const isFailed = chainIsFailed || job.status === "failed";
   const scanError = result?.error;
   const machine = result?._machine ?? null;
   const estimatedFiles = result?._estimated_files ?? null;
   const estimatedSizeKB = result?._estimated_size_kb ?? null;
-  const duration = result?.duration_ms ?? (
-    job.started_at && job.finished_at
-      ? new Date(job.finished_at).getTime() - new Date(job.started_at).getTime()
-      : null
-  );
+  const duration = displayResult.duration || null;
 
-  const allTech = [...new Set([...techStack, ...Object.keys(languages)])];
+  const allTech = [...new Set([...displayResult.techStack, ...Object.keys(displayResult.languages)])];
   const importanceGroups = groupScanFeaturesByImportance(features);
 
+  const overallStatus = chainIsDone ? "done" : isRunning ? "running" : isFailed ? "failed" : job.status;
   const statusConfig = {
     done: { variant: "secondary" as const, label: "Completed", dot: "bg-emerald-500" },
-    running: { variant: "outline" as const, label: "Running", dot: "bg-blue-500 animate-pulse" },
+    running: { variant: "outline" as const, label: isChain ? `Batch ${chain.filter(j => j.status === "done").length + 1} of ${chain.length}` : "Running", dot: "bg-blue-500 animate-pulse" },
     failed: { variant: "outline" as const, label: "Failed", dot: "bg-red-500" },
     queued: { variant: "outline" as const, label: "Queued", dot: "bg-muted-foreground animate-pulse" },
-  }[job.status] ?? { variant: "outline" as const, label: job.status, dot: "bg-muted-foreground" };
+  }[overallStatus] ?? { variant: "outline" as const, label: overallStatus, dot: "bg-muted-foreground" };
+
+  async function handleStop() {
+    setIsStopping(true);
+    try {
+      await cancelScanChain(scanJobId);
+      addNotification({ type: "info", title: "Scan stopped", message: "The scan chain has been cancelled." });
+      // Reload data
+      const [jobData, chainData] = await Promise.all([getScanJob(scanJobId), getScanChain(scanJobId)]);
+      setJob(jobData);
+      setChain(chainData);
+    } catch (err) {
+      addNotification({ type: "error", title: "Stop failed", message: err instanceof Error ? err.message : "Failed to stop scan." });
+    } finally {
+      setIsStopping(false);
+    }
+  }
 
   return (
     <motion.div
@@ -239,23 +487,46 @@ export function ScanDetail({ scanJobId, projectSlug, onBack }: ScanDetailProps) 
                 <span className={`size-1.5 rounded-full ${statusConfig.dot}`} />
                 {statusConfig.label}
               </Badge>
+              {isChain && (
+                <Badge variant="outline" className="h-5 text-[10px] px-2 gap-1 border-border/40 font-mono">
+                  {chain.length} {chain.length === 1 ? "batch" : "batches"}
+                </Badge>
+              )}
             </div>
             <p className="mt-1 text-[13px] text-muted-foreground">
               Scan triggered {job.triggered_by === "manual" ? "manually" : job.triggered_by === "webhook" ? "via push" : `via ${job.triggered_by}`}
               {job.started_at && ` · ${new Date(job.started_at).toLocaleString()}`}
-              {result && (result.files_scanned ?? 0) < (result.files_total ?? 0) && (result.files_total ?? 0) > 0 && (
+              {displayResult.filesScanned < displayResult.filesTotal && displayResult.filesTotal > 0 && (
                 <Badge variant="outline" className="ml-2 h-4 text-[9px] px-1.5 border-blue-500/30 text-blue-600 dark:text-blue-400">
                   Smart Scan
                 </Badge>
               )}
             </p>
           </div>
-          {duration != null && (
-            <span className="text-[13px] text-muted-foreground font-mono flex items-center gap-1.5">
-              <HugeiconsIcon icon={Clock01Icon} strokeWidth={2} className="size-3.5" />
-              {formatDuration(duration)}
-            </span>
-          )}
+          <div className="flex items-center gap-2">
+            {isRunning && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1.5 text-destructive hover:text-destructive hover:bg-destructive/10 border-destructive/20"
+                onClick={handleStop}
+                disabled={isStopping}
+              >
+                {isStopping ? (
+                  <HugeiconsIcon icon={Loading03Icon} strokeWidth={2} className="size-3 animate-spin" />
+                ) : (
+                  <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} className="size-3" />
+                )}
+                Stop Scan
+              </Button>
+            )}
+            {duration != null && (
+              <span className="text-[13px] text-muted-foreground font-mono flex items-center gap-1.5">
+                <HugeiconsIcon icon={Clock01Icon} strokeWidth={2} className="size-3.5" />
+                {formatDuration(duration)}
+              </span>
+            )}
+          </div>
         </div>
       </motion.div>
 
@@ -292,22 +563,22 @@ export function ScanDetail({ scanJobId, projectSlug, onBack }: ScanDetailProps) 
       )}
 
       {/* ─── Stats + Tech ─── */}
-      {result && result.files_total != null && (
+      {displayResult.filesTotal > 0 && (
         <motion.div variants={item} className="space-y-2">
           <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-[13px]">
             {[
               {
-                label: (result.files_scanned ?? 0) < (result.files_total ?? 0)
+                label: displayResult.filesScanned < displayResult.filesTotal
                   ? "Changed"
                   : "Files",
-                value: (result.files_scanned ?? 0) < (result.files_total ?? 0)
-                  ? `${result.files_scanned ?? 0} / ${result.files_total ?? 0}`
-                  : String(result.files_total ?? 0),
+                value: displayResult.filesScanned < displayResult.filesTotal
+                  ? `${displayResult.filesScanned} / ${displayResult.filesTotal}`
+                  : String(displayResult.filesTotal),
                 icon: File01Icon,
               },
-              { label: "Features", value: String(result.features_created ?? 0), icon: Layers01Icon },
-              { label: "Entries", value: String(result.entries_created ?? 0), icon: CodeIcon },
-              { label: "Errors", value: String(result.errors ?? 0), icon: (result.errors ?? 0) > 0 ? Cancel01Icon : CheckmarkCircle01Icon },
+              { label: "Features", value: String(displayResult.featuresCreated), icon: Layers01Icon },
+              { label: "Entries", value: String(displayResult.entriesCreated), icon: CodeIcon },
+              { label: "Errors", value: String(displayResult.errors), icon: displayResult.errors > 0 ? Cancel01Icon : CheckmarkCircle01Icon },
             ].map((stat) => (
               <div key={stat.label} className="flex items-center gap-2">
                 <HugeiconsIcon icon={stat.icon} strokeWidth={2} className="size-3.5 text-muted-foreground/60" />
@@ -316,9 +587,22 @@ export function ScanDetail({ scanJobId, projectSlug, onBack }: ScanDetailProps) 
               </div>
             ))}
           </div>
-          {(result.files_scanned ?? 0) < (result.files_total ?? 0) && (result.files_total ?? 0) > 0 && (
+
+          {/* Progress bar for running chains */}
+          {isRunning && displayResult.filesTotal > 0 && (
+            <div className="h-1.5 bg-muted/50 rounded-full overflow-hidden">
+              <motion.div
+                className="h-full bg-foreground/80 rounded-full"
+                initial={{ width: 0 }}
+                animate={{ width: `${Math.min(100, (displayResult.filesScanned / displayResult.filesTotal) * 100)}%` }}
+                transition={{ duration: 0.5 }}
+              />
+            </div>
+          )}
+
+          {displayResult.filesScanned < displayResult.filesTotal && displayResult.filesTotal > 0 && !isRunning && (
             <p className="text-[11px] text-muted-foreground">
-              Smart scan detected {(result.files_total ?? 0) - (result.files_scanned ?? 0)} unchanged files and skipped them to save compute.
+              Smart scan detected {displayResult.filesTotal - displayResult.filesScanned} unchanged files and skipped them to save compute.
             </p>
           )}
         </motion.div>
@@ -365,8 +649,13 @@ export function ScanDetail({ scanJobId, projectSlug, onBack }: ScanDetailProps) 
 
       {/* ─── Tabs ─── */}
       <motion.div variants={item}>
-        <Tabs defaultValue="features">
+        <Tabs defaultValue={isChain ? "timeline" : "features"}>
           <TabsList variant="line">
+            {isChain && (
+              <TabsTrigger value="timeline">
+                Timeline ({chain.length})
+              </TabsTrigger>
+            )}
             <TabsTrigger value="features">
               Features ({features.length})
             </TabsTrigger>
@@ -374,6 +663,13 @@ export function ScanDetail({ scanJobId, projectSlug, onBack }: ScanDetailProps) 
               Build Log
             </TabsTrigger>
           </TabsList>
+
+          {/* ─── Timeline Tab (chain only) ─── */}
+          {isChain && (
+            <TabsContent value="timeline" className="mt-5">
+              <ScanTimeline chain={chain} />
+            </TabsContent>
+          )}
 
           {/* ─── Features Tab ─── */}
           <TabsContent value="features" className="mt-5 space-y-6">
@@ -486,6 +782,7 @@ export function ScanDetail({ scanJobId, projectSlug, onBack }: ScanDetailProps) 
                   </div>
                   <span className="text-[11px] text-zinc-500 font-mono ml-2">
                     scan — {job.project_name}
+                    {isChain && ` — ${chain.length} batches`}
                   </span>
                   {isRunning && (
                     <HugeiconsIcon icon={Loading03Icon} strokeWidth={2} className="size-3 animate-spin text-zinc-500 ml-auto" />
@@ -500,14 +797,14 @@ export function ScanDetail({ scanJobId, projectSlug, onBack }: ScanDetailProps) 
                 {/* Log content */}
                 <ScrollArea className="h-80">
                   <div className="p-4 font-mono text-[12px] leading-relaxed">
-                    {logs.length === 0 && !isRunning && (
+                    {displayResult.logs.length === 0 && !isRunning && (
                       <p className="text-zinc-600">No log entries.</p>
                     )}
-                    {logs.length === 0 && isRunning && (
+                    {displayResult.logs.length === 0 && isRunning && (
                       <p className="text-zinc-500 animate-pulse">Initializing scan...</p>
                     )}
                     <AnimatePresence>
-                      {logs.map((log, i) => (
+                      {displayResult.logs.map((log, i) => (
                         <motion.div
                           key={i}
                           initial={{ opacity: 0 }}
@@ -552,11 +849,11 @@ export function ScanDetail({ scanJobId, projectSlug, onBack }: ScanDetailProps) 
                 </ScrollArea>
 
                 {/* Terminal footer */}
-                {job.status === "done" && (
+                {(chainIsDone || job.status === "done") && (
                   <div className="border-t border-zinc-800/80 px-4 py-2.5 flex items-center gap-2">
                     <HugeiconsIcon icon={CheckmarkCircle01Icon} strokeWidth={2} className="size-3.5 text-emerald-500" />
                     <span className="text-[11px] text-emerald-500/80 font-mono">
-                      Scan completed
+                      Scan completed{isChain ? ` — ${chain.length} batches` : ""}
                     </span>
                     {duration != null && (
                       <span className="text-[11px] text-zinc-600 font-mono ml-auto tabular-nums">
@@ -565,7 +862,7 @@ export function ScanDetail({ scanJobId, projectSlug, onBack }: ScanDetailProps) 
                     )}
                   </div>
                 )}
-                {job.status === "failed" && (
+                {(chainIsFailed || (!chainIsRunning && job.status === "failed")) && (
                   <div className="border-t border-zinc-800/80 px-4 py-2.5 flex items-center gap-2">
                     <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} className="size-3.5 text-red-500" />
                     <span className="text-[11px] text-red-500/80 font-mono">

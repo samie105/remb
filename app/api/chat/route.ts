@@ -5,6 +5,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { getFileContent } from "@/lib/github-reader";
 import { assembleContext, type ScoredItem } from "@/lib/context-assembler";
 import { getEntityNeighborhood, getRelatedEntities, getFeatureKnowledgeGraph } from "@/lib/graph-actions";
+import { logConversation } from "@/lib/conversation-actions";
 
 /* ─── context loader ─── */
 
@@ -1141,12 +1142,13 @@ ${projectList || "No projects yet."}${projectContextSection}${globalMemorySectio
         const currentMessages = [...conversationMessages];
         let loopCount = 0;
         const maxLoops = 8;
+        let fullResponseContent = "";
 
         while (loopCount < maxLoops) {
           loopCount++;
 
           const response = await openai.chat.completions.create({
-            model: process.env.OPENAI_CHAT_MODEL ?? "gpt-4.1-mini",
+            model: process.env.OPENAI_CHAT_MODEL ?? "gpt-4.1",
             temperature: 0.7,
             max_tokens: 4096,
             messages: currentMessages,
@@ -1168,6 +1170,7 @@ ${projectList || "No projects yet."}${projectContextSection}${globalMemorySectio
 
             if (delta?.content) {
               accumulatedContent += delta.content;
+              fullResponseContent += delta.content;
               send("text", { content: delta.content });
             }
 
@@ -1225,6 +1228,23 @@ ${projectList || "No projects yet."}${projectContextSection}${globalMemorySectio
               content: result,
             });
           }
+        }
+
+        // Save conversation to DB for syncing
+        if (fullResponseContent.trim()) {
+          const sessionId = `web-${userId}-${Date.now()}`;
+          const projectIdForLog = contextProject?.id ?? null;
+          const projectSlugForLog = contextProject?.slug ?? null;
+          logConversation({
+            userId,
+            projectId: projectIdForLog,
+            projectSlug: projectSlugForLog,
+            sessionId,
+            type: "conversation",
+            content: `**User**: ${message}\n\n**Assistant**: ${fullResponseContent}`,
+            tags: ["web-chat"],
+            source: "web",
+          }).catch(() => {/* non-critical */});
         }
 
         send("done", {});

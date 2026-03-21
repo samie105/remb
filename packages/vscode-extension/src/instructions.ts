@@ -226,12 +226,33 @@ export class InstructionsManager {
         "## Current Session Activity\n\n" + activityLines.join("\n");
     }
 
+    // Read installed skills from .remb.yml
+    let skillsSection = "";
+    try {
+      const configUri = vscode.Uri.joinPath(root, ".remb.yml");
+      const configRaw = Buffer.from(
+        await vscode.workspace.fs.readFile(configUri)
+      ).toString("utf-8");
+      const skillsMatch = configRaw.match(/^skills:\s*(.+)$/m);
+      if (skillsMatch?.[1]) {
+        const skills = skillsMatch[1].split(",").map((s: string) => s.trim()).filter(Boolean);
+        if (skills.length > 0) {
+          skillsSection = "## Installed Remb Skills\n\n" +
+            `The following Remb skills are installed in this project: ${skills.join(", ")}.\n` +
+            "These skills provide detailed instructions for specific Remb workflows. " +
+            "Check the skill files in your IDE's rules/commands directory for full details.\n" +
+            `Manage skills: \`remb skills list\`, \`remb skills add <name>\`, \`remb skills update\``;
+        }
+      }
+    } catch { /* no config or no skills line */ }
+
     const dynamicBody = generateDynamicBody(
       slug,
       contextSection,
       historySection,
       memoriesSection,
       activitySection,
+      skillsSection,
     );
 
     // Write dynamic files for each IDE
@@ -408,6 +429,7 @@ function generateDynamicBody(
   history: string,
   memories: string,
   activity: string,
+  skills?: string,
 ): string {
   const timestamp = new Date().toISOString().slice(0, 16);
   const sections = [
@@ -419,6 +441,10 @@ function generateDynamicBody(
     `> For the full context bundle, call \`remb_loadProjectContext\`.`,
     ``,
   ];
+
+  if (skills) {
+    sections.push(skills, "");
+  }
 
   if (memories) {
     sections.push(memories, "");

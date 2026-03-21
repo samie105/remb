@@ -17,6 +17,7 @@ import {
   Layers01Icon,
   ArrowDown01Icon,
   File01Icon,
+  File02Icon,
   Attachment01Icon,
   FolderLibraryIcon,
   StructureCheckIcon,
@@ -50,6 +51,7 @@ import {
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Badge } from "@/components/ui/badge";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { FileContextPicker } from "@/components/dashboard/plan/file-context-picker";
@@ -194,11 +196,78 @@ function isReadableFile(fileName: string): boolean {
   return false;
 }
 
+/* ─── file path detection ─── */
+
+const FILE_PATH_RE = /(?:^|\s|`)((?:[\w@.-]+\/)+[\w.-]+\.\w{1,10})(?:`|\s|$|[,;:)])/g;
+
+function getFileLabel(filePath: string): { name: string; type: string; description: string } {
+  const parts = filePath.split("/");
+  const fileName = parts[parts.length - 1];
+  const ext = fileName.split(".").pop() ?? "";
+
+  if (fileName === "route.ts" || fileName === "route.tsx") {
+    const method = parts.includes("api") ? "API" : "Page";
+    const routePath = parts.slice(parts.indexOf("api") >= 0 ? parts.indexOf("api") : 0, -1).join("/");
+    return { name: routePath || fileName, type: `${method} Route`, description: `${method} endpoint at ${filePath}` };
+  }
+  if (fileName === "page.tsx" || fileName === "page.ts") {
+    const pagePath = parts.slice(parts.indexOf("app") >= 0 ? parts.indexOf("app") + 1 : 0, -1).join("/");
+    return { name: pagePath || "root", type: "Page", description: `Next.js page at /${pagePath}` };
+  }
+  if (parts.includes("components")) {
+    return { name: fileName.replace(/\.\w+$/, ""), type: "Component", description: `React component at ${filePath}` };
+  }
+  if (fileName.startsWith("use") || parts.includes("hooks")) {
+    return { name: fileName.replace(/\.\w+$/, ""), type: "Hook", description: `React hook at ${filePath}` };
+  }
+  if (parts.includes("lib") || parts.includes("utils")) {
+    return { name: fileName.replace(/\.\w+$/, ""), type: "Library", description: `Utility module at ${filePath}` };
+  }
+
+  const typeMap: Record<string, string> = {
+    ts: "TypeScript", tsx: "Component", js: "JavaScript", jsx: "Component",
+    css: "Stylesheet", json: "Config", md: "Document", sql: "Migration",
+  };
+  return { name: fileName.replace(/\.\w+$/, ""), type: typeMap[ext] ?? "File", description: filePath };
+}
+
+function FilePathLink({ filePath }: { filePath: string }) {
+  const info = getFileLabel(filePath);
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/60 px-1.5 py-0.5 text-[12px] font-medium text-foreground cursor-default hover:bg-accent transition-colors">
+          <HugeiconsIcon icon={File02Icon} className="size-3 text-muted-foreground shrink-0" />
+          <span className="truncate max-w-[180px]">{info.name}</span>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="p-0 bg-popover text-popover-foreground border border-border shadow-xl rounded-xl overflow-hidden max-w-xs">
+        <div className="px-3 py-2.5 space-y-1.5">
+          <div className="flex items-center gap-2">
+            <Badge variant="secondary" className="text-[10px]">{info.type}</Badge>
+            <span className="text-[11px] font-semibold text-foreground truncate">{info.name}</span>
+          </div>
+          <p className="text-[11px] text-muted-foreground leading-relaxed">{info.description}</p>
+          <code className="block text-[10px] text-muted-foreground/70 font-mono truncate">{filePath}</code>
+        </div>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 /* ─── markdown components ─── */
 
 const markdownComponents: Components = {
   code({ className, children, ...props }) {
     const isInline = !className;
+    const text = String(children).replace(/\n$/, "");
+
+    if (isInline && FILE_PATH_RE.test(text)) {
+      FILE_PATH_RE.lastIndex = 0;
+      return <FilePathLink filePath={text} />;
+    }
+
     if (!isInline) {
       return (
         <code className={className} {...props}>

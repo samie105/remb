@@ -429,6 +429,20 @@ export const initCommand = new Command("init")
     info(
       `${chalk.bold("REMB.md")} generated — your IDE's AI agent can read it to learn all Remb commands.`
     );
+
+    // Offer to install recommended skills
+    try {
+      const installSkills = await promptYesNo(
+        "Install recommended AI skills (remb-context, remb-memory, remb-scan)?"
+      );
+      if (installSkills) {
+        info("Installing skills...");
+        const { installSkillsAfterInit } = await import("./skills.js");
+        await installSkillsAfterInit(cwd, ide);
+      }
+    } catch {
+      // Non-interactive or user declined — skip silently
+    }
   });
 
 function injectIntoIDEContextFiles(cwd: string, slug: string, apiUrl: string, ide: string): string[] {

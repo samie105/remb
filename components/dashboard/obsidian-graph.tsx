@@ -98,18 +98,202 @@ interface GraphLink extends SimulationLinkDatum<GraphNode> {
   importedSymbols?: string[];
 }
 
+/* ─── Selected Node Detail Panel ─── */
+function SelectedNodePanel({
+  node,
+  links,
+  allNodes,
+  isDark,
+  onClose,
+}: {
+  node: GraphNode;
+  links: GraphLink[];
+  allNodes: GraphNode[];
+  isDark: boolean;
+  onClose: () => void;
+}) {
+  const nodeMap = React.useMemo(() => new Map(allNodes.map((n) => [n.id, n])), [allNodes]);
+
+  // Find incoming and outgoing connections
+  const { incoming, outgoing } = React.useMemo(() => {
+    const inc: Array<{ node: GraphNode; symbols: string[]; relation: string }> = [];
+    const out: Array<{ node: GraphNode; symbols: string[]; relation: string }> = [];
+    for (const link of links) {
+      const srcId = typeof link.source === "object" ? link.source.id : String(link.source);
+      const tgtId = typeof link.target === "object" ? link.target.id : String(link.target);
+      if (tgtId === node.id) {
+        const srcNode = nodeMap.get(srcId);
+        if (srcNode) inc.push({ node: srcNode, symbols: link.importedSymbols ?? [], relation: link.relation });
+      }
+      if (srcId === node.id) {
+        const tgtNode = nodeMap.get(tgtId);
+        if (tgtNode) out.push({ node: tgtNode, symbols: link.importedSymbols ?? [], relation: link.relation });
+      }
+    }
+    return { incoming: inc, outgoing: out };
+  }, [node.id, links, nodeMap]);
+
+  // Build an AI-style explanation
+  const explanation = React.useMemo(() => {
+    const type = NODE_LABELS[node.nodeType];
+    const parts: string[] = [];
+
+    // Role description
+    if (node.nodeType === "route") {
+      parts.push(`This is a ${type.toLowerCase()} file that defines a user-facing page${node.path.includes("/api/") ? " (API route)" : ""}.`);
+    } else if (node.nodeType === "api") {
+      parts.push(`This API endpoint handles server-side logic and data processing.`);
+    } else if (node.nodeType === "component") {
+      parts.push(`This is a reusable UI component${node.connections >= 3 ? " used widely across the application" : ""}.`);
+    } else if (node.nodeType === "lib") {
+      parts.push(`This is a library/utility module providing shared functionality.`);
+    } else if (node.nodeType === "hook") {
+      parts.push(`This is a custom React hook encapsulating reusable stateful logic.`);
+    } else {
+      parts.push(`This ${type.toLowerCase()} file is part of the project infrastructure.`);
+    }
+
+    // Importance
+    if (node.importance != null && node.importance >= 7) {
+      parts.push(`It has high importance (${node.importance}/10) indicating it's critical to the application architecture.`);
+    } else if (node.importance != null && node.importance >= 4) {
+      parts.push(`It has moderate importance (${node.importance}/10) in the overall architecture.`);
+    }
+
+    // Connectivity analysis
+    if (incoming.length > 0 && outgoing.length > 0) {
+      parts.push(`It imports from ${outgoing.length} module${outgoing.length !== 1 ? "s" : ""} and is imported by ${incoming.length} other file${incoming.length !== 1 ? "s" : ""}.`);
+    } else if (incoming.length > 0) {
+      parts.push(`It is imported by ${incoming.length} file${incoming.length !== 1 ? "s" : ""} but has no internal dependencies — likely a leaf utility.`);
+    } else if (outgoing.length > 0) {
+      parts.push(`It depends on ${outgoing.length} module${outgoing.length !== 1 ? "s" : ""} but nothing imports it directly — likely an entry point or page.`);
+    }
+
+    // Hub analysis
+    if (node.connections >= 5) {
+      parts.push(`This is a hub node with ${node.connections} connections — changes here have wide impact.`);
+    }
+
+    // Feature association
+    if (node.features.length > 0) {
+      parts.push(`Associated with: ${node.features.slice(0, 3).join(", ")}${node.features.length > 3 ? ` and ${node.features.length - 3} more` : ""}.`);
+    }
+
+    return parts.join(" ");
+  }, [node, incoming, outgoing]);
+
+  const D = isDark;
+  const panelBg = D ? "bg-black/80 border-white/10" : "bg-white/90 border-black/10";
+  const headTxt = D ? "text-white" : "text-black/90";
+  const bodyTxt = D ? "text-white/70" : "text-black/65";
+  const muteTxt = D ? "text-white/40" : "text-black/40";
+  const chipBg  = D ? "bg-white/8 text-white/60" : "bg-black/6 text-black/55";
+  const secBg   = D ? "bg-white/5" : "bg-black/4";
+  const closeBg = D ? "hover:bg-white/10 text-white/50" : "hover:bg-black/10 text-black/40";
+
+  return (
+    <div className={`absolute top-3 right-12 z-20 w-80 max-h-[calc(100%-24px)] overflow-y-auto backdrop-blur-xl rounded-xl border shadow-2xl ${panelBg}`}>
+      {/* Header */}
+      <div className="sticky top-0 z-10 flex items-start gap-2 px-4 pt-3 pb-2 backdrop-blur-xl" style={{ background: "inherit" }}>
+        <div className="size-3 shrink-0 rounded-full mt-1" style={{ backgroundColor: NODE_COLORS[node.nodeType] }} />
+        <div className="flex-1 min-w-0">
+          <h3 className={`text-sm font-semibold truncate ${headTxt}`}>{node.label}</h3>
+          <p className={`text-[10px] font-mono truncate ${muteTxt}`}>{node.path}</p>
+        </div>
+        <button onClick={onClose} className={`size-6 shrink-0 rounded-md flex items-center justify-center text-xs transition-colors ${closeBg}`}>✕</button>
+      </div>
+
+      <div className="px-4 pb-4 space-y-3">
+        {/* Stats row */}
+        <div className="flex items-center gap-3">
+          <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${chipBg}`}>{NODE_LABELS[node.nodeType]}</span>
+          {node.importance != null && (
+            <span className={`text-[10px] ${muteTxt}`}>★ {node.importance}/10 importance</span>
+          )}
+          <span className={`text-[10px] ${muteTxt}`}>{node.connections} conn.</span>
+        </div>
+
+        {/* AI explanation */}
+        <div className={`rounded-lg px-3 py-2.5 ${secBg}`}>
+          <div className="flex items-center gap-1.5 mb-1.5">
+            <span className="text-[10px]">🧠</span>
+            <span className={`text-[10px] font-semibold ${D ? "text-white/60" : "text-black/50"}`}>Analysis</span>
+          </div>
+          <p className={`text-[11px] leading-relaxed ${bodyTxt}`}>{explanation}</p>
+        </div>
+
+        {/* Features */}
+        {node.features.length > 0 && (
+          <div>
+            <p className={`text-[10px] font-semibold mb-1.5 ${muteTxt}`}>FEATURES ({node.features.length})</p>
+            <div className="flex flex-wrap gap-1">
+              {node.features.map((f) => (
+                <span key={f} className={`text-[10px] rounded-md px-2 py-0.5 truncate max-w-full ${chipBg}`}>{f}</span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Imports (outgoing) */}
+        {outgoing.length > 0 && (
+          <div>
+            <p className={`text-[10px] font-semibold mb-1.5 ${muteTxt}`}>IMPORTS ({outgoing.length})</p>
+            <div className="space-y-1">
+              {outgoing.slice(0, 8).map((dep) => (
+                <div key={dep.node.id} className={`flex items-center gap-2 rounded-md px-2 py-1 ${secBg}`}>
+                  <div className="size-1.5 shrink-0 rounded-full" style={{ backgroundColor: NODE_COLORS[dep.node.nodeType] }} />
+                  <span className={`text-[10px] truncate flex-1 ${bodyTxt}`}>{dep.node.label}</span>
+                  {dep.symbols.length > 0 && (
+                    <span className={`text-[9px] truncate max-w-24 ${muteTxt}`}>
+                      {dep.symbols.slice(0, 2).join(", ")}{dep.symbols.length > 2 ? "…" : ""}
+                    </span>
+                  )}
+                </div>
+              ))}
+              {outgoing.length > 8 && <p className={`text-[9px] px-2 ${muteTxt}`}>+{outgoing.length - 8} more</p>}
+            </div>
+          </div>
+        )}
+
+        {/* Imported by (incoming) */}
+        {incoming.length > 0 && (
+          <div>
+            <p className={`text-[10px] font-semibold mb-1.5 ${muteTxt}`}>IMPORTED BY ({incoming.length})</p>
+            <div className="space-y-1">
+              {incoming.slice(0, 8).map((dep) => (
+                <div key={dep.node.id} className={`flex items-center gap-2 rounded-md px-2 py-1 ${secBg}`}>
+                  <div className="size-1.5 shrink-0 rounded-full" style={{ backgroundColor: NODE_COLORS[dep.node.nodeType] }} />
+                  <span className={`text-[10px] truncate flex-1 ${bodyTxt}`}>{dep.node.label}</span>
+                  <span className={`text-[9px] ${muteTxt}`}>{NODE_LABELS[dep.node.nodeType]}</span>
+                </div>
+              ))}
+              {incoming.length > 8 && <p className={`text-[9px] px-2 ${muteTxt}`}>+{incoming.length - 8} more</p>}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ─── Props ─── */
 export interface ObsidianGraphProps {
   nodes: StructureNode[];
   edges: StructureEdge[];
+  /** Called when a node is clicked — for showing detail panel */
+  onNodeSelect?: (node: { id: string; label: string; path: string; nodeType: FileNodeType; features: string[]; importance?: number; connections: number } | null) => void;
 }
 
 /* ─── Main Component ─── */
-export function ObsidianGraph({ nodes, edges }: ObsidianGraphProps) {
+export function ObsidianGraph({ nodes, edges, onNodeSelect }: ObsidianGraphProps) {
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
   const containerRef = React.useRef<HTMLDivElement>(null);
   const simRef = React.useRef<ReturnType<typeof forceSimulation<GraphNode>> | null>(null);
   const animRef = React.useRef<number>(0);
+
+  const [isFullscreen, setIsFullscreen] = React.useState(false);
+  const selectedRef = React.useRef<GraphNode | null>(null);
+  const [selectedNode, setSelectedNode] = React.useState<GraphNode | null>(null);
 
   // Interaction state kept in refs for canvas perf
   const transformRef = React.useRef({ x: 0, y: 0, k: 1 });
@@ -382,16 +566,35 @@ export function ObsidianGraph({ nodes, edges }: ObsidianGraphProps) {
       }
 
       // Draw nodes
+      const selNode = selectedRef.current;
       for (const node of gNodes) {
         if (node.x == null || node.y == null) continue;
 
         const color = NODE_COLORS[node.nodeType];
         const isHovered = hoveredNode?.id === node.id;
+        const isSelected = selNode?.id === node.id;
         const isNeighbor = hasHL && highlightedIds.has(node.id) && !isHovered;
         const isSR = hasSR && searchIds.has(node.id);
         const isDim = (hasHL && !highlightedIds.has(node.id)) || (hasSR && !isSR);
         const isHub = node.featureCount >= 2 || node.connections >= 3;
         const r = node.radius;
+
+        // Selection ring
+        if (isSelected) {
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, r + 4 / k, 0, Math.PI * 2);
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 2 / k;
+          ctx.stroke();
+          // Glow
+          const sg = ctx.createRadialGradient(node.x, node.y, r * 0.5, node.x, node.y, r * 4);
+          sg.addColorStop(0, color + "44");
+          sg.addColorStop(1, color + "00");
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, r * 4, 0, Math.PI * 2);
+          ctx.fillStyle = sg;
+          ctx.fill();
+        }
 
         // Pulsing glow for hovered or search results
         if (isHovered || isSR) {
@@ -575,15 +778,31 @@ export function ObsidianGraph({ nodes, edges }: ObsidianGraphProps) {
   const handlePointerUp = React.useCallback(
     (e: React.PointerEvent<HTMLCanvasElement>) => {
       const drag = dragRef.current;
+      const wasDrag = drag.node
+        ? Math.abs(e.clientX - drag.startX) > 4 || Math.abs(e.clientY - drag.startY) > 4
+        : drag.isPanning && (Math.abs(e.clientX - drag.startX) > 4 || Math.abs(e.clientY - drag.startY) > 4);
+
       if (drag.node) {
+        // If it was a click (not a drag), select the node
+        if (!wasDrag) {
+          const sel = selectedRef.current?.id === drag.node.id ? null : drag.node;
+          selectedRef.current = sel;
+          setSelectedNode(sel);
+          onNodeSelect?.(sel ? { id: sel.id, label: sel.label, path: sel.path, nodeType: sel.nodeType, features: sel.features, importance: sel.importance, connections: sel.connections } : null);
+        }
         drag.node.fx = null;
         drag.node.fy = null;
         simRef.current?.alphaTarget(0);
+      } else if (!wasDrag) {
+        // Clicked on empty space — deselect
+        selectedRef.current = null;
+        setSelectedNode(null);
+        onNodeSelect?.(null);
       }
       dragRef.current = { node: null, isPanning: false, startX: 0, startY: 0, startTx: 0, startTy: 0 };
       canvasRef.current?.releasePointerCapture(e.pointerId);
     },
-    []
+    [onNodeSelect]
   );
 
   const handleWheel = React.useCallback((e: React.WheelEvent<HTMLCanvasElement>) => {
@@ -614,6 +833,62 @@ export function ObsidianGraph({ nodes, edges }: ObsidianGraphProps) {
     transformRef.current = { x: 0, y: 0, k: 1 };
   }, []);
 
+  /* ─── Fullscreen toggle ─── */
+  const toggleFullscreen = React.useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    if (!document.fullscreenElement) {
+      el.requestFullscreen().then(() => setIsFullscreen(true)).catch(() => {});
+    } else {
+      document.exitFullscreen().then(() => setIsFullscreen(false)).catch(() => {});
+    }
+  }, []);
+
+  React.useEffect(() => {
+    const handler = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", handler);
+    return () => document.removeEventListener("fullscreenchange", handler);
+  }, []);
+
+  /* ─── Keyboard shortcuts ─── */
+  React.useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && selectedNode) {
+        setSelectedNode(null);
+        selectedRef.current = null;
+        onNodeSelect?.(null);
+      }
+      if (e.key === "f" && !e.metaKey && !e.ctrlKey && !(e.target instanceof HTMLInputElement)) {
+        toggleFullscreen();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [selectedNode, onNodeSelect, toggleFullscreen]);
+
+  /* ─── Fit-to-view ─── */
+  const fitToView = React.useCallback(() => {
+    const { nodes: gNodes } = graphDataRef.current;
+    if (gNodes.length === 0) return;
+    const { w, h } = sizeRef.current;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const n of gNodes) {
+      if (n.x == null || n.y == null) continue;
+      minX = Math.min(minX, n.x - n.radius);
+      maxX = Math.max(maxX, n.x + n.radius);
+      minY = Math.min(minY, n.y - n.radius);
+      maxY = Math.max(maxY, n.y + n.radius);
+    }
+    if (!isFinite(minX)) return;
+    const padding = 60;
+    const graphW = maxX - minX + padding * 2;
+    const graphH = maxY - minY + padding * 2;
+    const k = Math.min(w / graphW, h / graphH, 2);
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    transformRef.current = { x: -cx * k, y: -cy * k, k };
+  }, []);
+
   /* ─── Theme-adaptive UI classes ─── */
   const D = isDark;
   const inputCls = D
@@ -635,7 +910,7 @@ export function ObsidianGraph({ nodes, edges }: ObsidianGraphProps) {
   return (
     <div
       ref={containerRef}
-      className="relative w-full h-full rounded-xl overflow-hidden"
+      className={`relative w-full h-full overflow-hidden ${isFullscreen ? "" : "rounded-xl"}`}
       style={{ background: isDark ? "rgb(13,13,15)" : "rgb(248,248,250)" }}
     >
       <canvas
@@ -647,27 +922,49 @@ export function ObsidianGraph({ nodes, edges }: ObsidianGraphProps) {
         onWheel={handleWheel}
       />
 
-      {/* Search bar */}
-      <div className="absolute top-3 left-3 z-10">
+      {/* Top-left: search bar */}
+      <div className="absolute top-3 left-3 z-10 flex items-center gap-2">
         <input
           type="text"
-          placeholder="Filter nodes..."
+          placeholder="Search nodes... (type to filter)"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          className={inputCls}
+          className={D
+            ? "h-8 w-56 rounded-lg border border-white/10 bg-black/50 px-3 text-xs text-white/80 placeholder:text-white/30 outline-none focus:border-white/20 backdrop-blur-md transition-colors"
+            : "h-8 w-56 rounded-lg border border-black/10 bg-white/60 px-3 text-xs text-black/70 placeholder:text-black/30 outline-none focus:border-black/20 backdrop-blur-md transition-colors"
+          }
         />
       </div>
 
-      {/* Zoom + recenter controls */}
-      <div className="absolute bottom-3 right-3 z-10 flex items-center gap-1">
-        <button onClick={() => { transformRef.current.k = Math.min(6, transformRef.current.k * 1.3); }} className={btnCls} title="Zoom in">+</button>
-        <button onClick={() => { transformRef.current.k = Math.max(0.1, transformRef.current.k / 1.3); }} className={btnCls} title="Zoom out">−</button>
-        <button onClick={recenter} className={btnCls} title="Recenter">⊙</button>
+      {/* Top-right: stats + fullscreen */}
+      <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
+        <div className={`text-[10px] font-mono ${subCls}`}>
+          {nodes.length} nodes · {edges.length} edges
+        </div>
+        <button
+          onClick={toggleFullscreen}
+          className={btnCls}
+          title={isFullscreen ? "Exit fullscreen (F)" : "Fullscreen (F)"}
+        >
+          {isFullscreen ? "⊡" : "⊞"}
+        </button>
       </div>
 
-      {/* Legend */}
-      <div className={legendCls}>
-        {(["route", "api", "component", "lib", "hook"] as FileNodeType[]).map((type) => (
+      {/* Bottom-right: zoom controls */}
+      <div className="absolute bottom-3 right-3 z-10 flex flex-col items-center gap-1">
+        <button onClick={() => { transformRef.current.k = Math.min(6, transformRef.current.k * 1.3); }} className={btnCls} title="Zoom in">+</button>
+        <button onClick={() => { transformRef.current.k = Math.max(0.1, transformRef.current.k / 1.3); }} className={btnCls} title="Zoom out">−</button>
+        <div className={D ? "h-px w-5 bg-white/10" : "h-px w-5 bg-black/10"} />
+        <button onClick={fitToView} className={btnCls} title="Fit all nodes in view">⊙</button>
+        <button onClick={recenter} className={btnCls} title="Reset to center">↺</button>
+      </div>
+
+      {/* Bottom-left: legend (collapsed in small view) */}
+      <div className={D
+        ? "absolute bottom-3 left-3 z-10 flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 bg-black/60 backdrop-blur-md rounded-lg border border-white/8 max-w-[calc(100%-140px)]"
+        : "absolute bottom-3 left-3 z-10 flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 bg-white/70 backdrop-blur-md rounded-lg border border-black/8 max-w-[calc(100%-140px)]"
+      }>
+        {(["route", "api", "component", "lib", "hook", "config"] as FileNodeType[]).map((type) => (
           <div key={type} className="flex items-center gap-1.5">
             <div className="size-2 rounded-full" style={{ backgroundColor: NODE_COLORS[type] }} />
             <span className={txtCls}>{NODE_LABELS[type]}</span>
@@ -675,32 +972,24 @@ export function ObsidianGraph({ nodes, edges }: ObsidianGraphProps) {
         ))}
         <div className={divCls} />
         <div className="flex items-center gap-1.5">
-          <svg width="16" height="8" viewBox="0 0 16 8" className="shrink-0">
-            <line x1="0" y1="4" x2="11" y2="4" stroke={isDark ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.4)"} strokeWidth="1.2" />
-            <polygon points="11,1 16,4 11,7" fill={isDark ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.4)"} />
+          <svg width="14" height="6" viewBox="0 0 14 6" className="shrink-0">
+            <line x1="0" y1="3" x2="9" y2="3" stroke={isDark ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.4)"} strokeWidth="1" />
+            <polygon points="9,0.5 14,3 9,5.5" fill={isDark ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.4)"} />
           </svg>
           <span className={txtCls}>Import</span>
         </div>
         <div className="flex items-center gap-1.5">
-          <svg width="16" height="8" viewBox="0 0 16 8" className="shrink-0">
-            <line x1="0" y1="4" x2="11" y2="4" stroke={isDark ? "rgba(255,255,255,0.35)" : "rgba(0,0,0,0.3)"} strokeWidth="1" strokeDasharray="2 2" />
-            <polygon points="11,1.5 15,4 11,6.5" fill={isDark ? "rgba(255,255,255,0.35)" : "rgba(0,0,0,0.3)"} />
+          <svg width="14" height="6" viewBox="0 0 14 6" className="shrink-0">
+            <line x1="0" y1="3" x2="9" y2="3" stroke={isDark ? "rgba(255,255,255,0.35)" : "rgba(0,0,0,0.3)"} strokeWidth="1" strokeDasharray="2 2" />
+            <polygon points="9,1 13,3 9,5" fill={isDark ? "rgba(255,255,255,0.35)" : "rgba(0,0,0,0.3)"} />
           </svg>
           <span className={txtCls}>Dynamic</span>
         </div>
-        <div className="flex items-center gap-1.5">
-          <div className="w-4 h-px" style={{ background: isDark ? "rgba(96,165,250,0.5)" : "rgba(59,130,246,0.5)" }} />
-          <span className={txtCls}>Shared</span>
-        </div>
-        <div className={divCls} />
-        <div className="flex items-center gap-1.5">
-          <div className="size-2.5 rounded-full" style={{ background: isDark ? "rgba(255,255,255,0.2)" : "rgba(0,0,0,0.15)" }} />
-          <span className={txtCls}>Hub node</span>
-        </div>
+        <span className={`text-[9px] ${subCls}`}>Click node for details · F for fullscreen · Scroll to zoom</span>
       </div>
 
-      {/* Hover tooltip */}
-      {hoverInfo && (
+      {/* Hover tooltip (suppressed when a node is selected) */}
+      {hoverInfo && !selectedNode && (
         <div
           className="absolute z-20 pointer-events-none"
           style={{
@@ -716,32 +1005,29 @@ export function ObsidianGraph({ nodes, edges }: ObsidianGraphProps) {
             </div>
             <p className={`text-[10px] font-mono truncate mb-1.5 ${subCls}`}>{hoverInfo.node.path}</p>
             <div className={`flex gap-3 text-[9px] mb-1.5 ${subCls}`}>
-              <span>{hoverInfo.node.connections} import{hoverInfo.node.connections !== 1 ? "s" : ""}</span>
+              <span>{hoverInfo.node.connections} connection{hoverInfo.node.connections !== 1 ? "s" : ""}</span>
               {hoverInfo.node.features.length > 0 && (
                 <span>{hoverInfo.node.features.length} feature{hoverInfo.node.features.length !== 1 ? "s" : ""}</span>
               )}
               {hoverInfo.node.importance != null && (
-                <span>★ {(hoverInfo.node.importance * 10).toFixed(0)}/10</span>
+                <span>★ {hoverInfo.node.importance}/10</span>
               )}
             </div>
-            {hoverInfo.node.features.length > 0 && (
-              <div className="flex flex-wrap gap-1">
-                {hoverInfo.node.features.slice(0, 4).map((f) => (
-                  <span key={f} className={`text-[9px] rounded px-1.5 py-px truncate max-w-20 ${tagCls}`}>{f}</span>
-                ))}
-                {hoverInfo.node.features.length > 4 && (
-                  <span className={`text-[9px] ${subCls}`}>+{hoverInfo.node.features.length - 4}</span>
-                )}
-              </div>
-            )}
+            <p className={`text-[9px] ${subCls}`}>Click for detailed analysis</p>
           </div>
         </div>
       )}
 
-      {/* Node/edge count */}
-      <div className={`absolute top-3 right-3 z-10 text-[10px] font-mono ${subCls}`}>
-        {nodes.length} nodes · {edges.length} edges
-      </div>
+      {/* Selected node detail panel */}
+      {selectedNode && (
+        <SelectedNodePanel
+          node={selectedNode}
+          links={graphDataRef.current.links}
+          allNodes={graphDataRef.current.nodes}
+          isDark={D}
+          onClose={() => { selectedRef.current = null; setSelectedNode(null); onNodeSelect?.(null); }}
+        />
+      )}
     </div>
   );
 }

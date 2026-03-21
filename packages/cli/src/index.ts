@@ -15,6 +15,7 @@ import { pushCommand } from "./commands/push.js";
 import { historyCommand } from "./commands/history.js";
 import { importCommand } from "./commands/import.js";
 import { planCommand } from "./commands/plan.js";
+import { skillsCommand } from "./commands/skills.js";
 
 declare const __CLI_VERSION__: string;
 
@@ -66,6 +67,9 @@ program.addCommand(projectsCommand);
 
 // ── Plans ───────────────────────────────────────────
 program.addCommand(planCommand);
+
+// ── Skills ──────────────────────────────────────────
+program.addCommand(skillsCommand);
 
 // ── MCP server ──────────────────────────────────────
 program.addCommand(serveCommand);

@@ -410,6 +410,12 @@ func runInit(cmd *cobra.Command, args []string) {
 	}
 
 	output.Info(output.Bold("REMB.md") + " generated — your IDE's AI agent can read it to learn all Remb commands.")
+
+	// Offer to install recommended skills
+	if isTerminal() && promptYesNo("Install recommended AI skills (remb-context, remb-memory, remb-scan)?") {
+		output.Info("Installing skills...")
+		installSkillsAfterInit(cwd, ide)
+	}
 }
 
 // ─── IDE Resolution ───────────────────────────────────────────────────────────
