@@ -241,8 +241,13 @@ export function ScanDetail({ scanJobId, projectSlug, onBack }: ScanDetailProps) 
               </Badge>
             </div>
             <p className="mt-1 text-[13px] text-muted-foreground">
-              Scan triggered {job.triggered_by === "manual" ? "manually" : `via ${job.triggered_by}`}
+              Scan triggered {job.triggered_by === "manual" ? "manually" : job.triggered_by === "webhook" ? "via push" : `via ${job.triggered_by}`}
               {job.started_at && ` · ${new Date(job.started_at).toLocaleString()}`}
+              {result && (result.files_scanned ?? 0) < (result.files_total ?? 0) && (result.files_total ?? 0) > 0 && (
+                <Badge variant="outline" className="ml-2 h-4 text-[9px] px-1.5 border-blue-500/30 text-blue-600 dark:text-blue-400">
+                  Smart Scan
+                </Badge>
+              )}
             </p>
           </div>
           {duration != null && (
@@ -288,19 +293,34 @@ export function ScanDetail({ scanJobId, projectSlug, onBack }: ScanDetailProps) 
 
       {/* ─── Stats + Tech ─── */}
       {result && result.files_total != null && (
-        <motion.div variants={item} className="flex flex-wrap items-center gap-x-6 gap-y-2 text-[13px]">
-          {[
-            { label: "Files", value: `${result.files_scanned ?? 0}/${result.files_total ?? 0}`, icon: File01Icon },
-            { label: "Features", value: String(result.features_created ?? 0), icon: Layers01Icon },
-            { label: "Entries", value: String(result.entries_created ?? 0), icon: CodeIcon },
-            { label: "Errors", value: String(result.errors ?? 0), icon: (result.errors ?? 0) > 0 ? Cancel01Icon : CheckmarkCircle01Icon },
-          ].map((stat) => (
-            <div key={stat.label} className="flex items-center gap-2">
-              <HugeiconsIcon icon={stat.icon} strokeWidth={2} className="size-3.5 text-muted-foreground/60" />
-              <span className="font-semibold tabular-nums text-foreground">{stat.value}</span>
-              <span className="text-muted-foreground/60">{stat.label}</span>
-            </div>
-          ))}
+        <motion.div variants={item} className="space-y-2">
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-[13px]">
+            {[
+              {
+                label: (result.files_scanned ?? 0) < (result.files_total ?? 0)
+                  ? "Changed"
+                  : "Files",
+                value: (result.files_scanned ?? 0) < (result.files_total ?? 0)
+                  ? `${result.files_scanned ?? 0} / ${result.files_total ?? 0}`
+                  : String(result.files_total ?? 0),
+                icon: File01Icon,
+              },
+              { label: "Features", value: String(result.features_created ?? 0), icon: Layers01Icon },
+              { label: "Entries", value: String(result.entries_created ?? 0), icon: CodeIcon },
+              { label: "Errors", value: String(result.errors ?? 0), icon: (result.errors ?? 0) > 0 ? Cancel01Icon : CheckmarkCircle01Icon },
+            ].map((stat) => (
+              <div key={stat.label} className="flex items-center gap-2">
+                <HugeiconsIcon icon={stat.icon} strokeWidth={2} className="size-3.5 text-muted-foreground/60" />
+                <span className="font-semibold tabular-nums text-foreground">{stat.value}</span>
+                <span className="text-muted-foreground/60">{stat.label}</span>
+              </div>
+            ))}
+          </div>
+          {(result.files_scanned ?? 0) < (result.files_total ?? 0) && (result.files_total ?? 0) > 0 && (
+            <p className="text-[11px] text-muted-foreground">
+              Smart scan detected {(result.files_total ?? 0) - (result.files_scanned ?? 0)} unchanged files and skipped them to save compute.
+            </p>
+          )}
         </motion.div>
       )}
 

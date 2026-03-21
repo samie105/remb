@@ -8,6 +8,7 @@
 
 import { createAdminClient } from "@/lib/supabase/server";
 import { generateEmbedding } from "@/lib/openai";
+import { assembleContext } from "@/lib/context-assembler";
 import type { AggregatedTool } from "@/lib/mcp-proxy";
 import type { MemoryTier, MemoryCategory } from "@/lib/supabase/types";
 
@@ -19,7 +20,7 @@ const PREFIX = "remb";
  * Bump this whenever builtin tools are added, removed, or changed.
  * This ensures connected MCP clients get a `notifications/tools/list_changed`.
  */
-export const BUILTIN_TOOLS_VERSION = 6;
+export const BUILTIN_TOOLS_VERSION = 8;
 
 /* ─── tool definitions ─── */
 
@@ -678,6 +679,88 @@ export function getBuiltinTools(): AggregatedTool[] {
       _serverId: "__builtin__",
       _originalName: "cross_project_search",
     },
+    {
+      name: `${PREFIX}__cross_project_patterns`,
+      description: "[Remb] Find architectural patterns that appear across multiple projects. Identifies shared approaches, common design decisions, and reusable solutions. Use when the user says 'how did I do this in another project' or wants to apply patterns from one project to another.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          pattern_query: {
+            type: "string",
+            description: "Pattern to search for (e.g. 'auth flow', 'API structure', 'state management')",
+          },
+          source_project_slug: {
+            type: "string",
+            description: "Optional: project to use as the pattern source",
+          },
+          limit: {
+            type: "number",
+            description: "Max results (default: 10)",
+          },
+        },
+        required: ["pattern_query"],
+      },
+      _serverId: "__builtin__",
+      _originalName: "cross_project_patterns",
+    },
+    // ─── Graph tools ───
+    {
+      name: `${PREFIX}__graph_query`,
+      description: "[Remb] Traverse the knowledge graph from any entity. Find related memories, features, context entries, conversations, and plans through their relationships. Supports multi-hop traversal (up to 4 hops) with optional relation filtering.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          entity_type: {
+            type: "string",
+            enum: ["memory", "context_entry", "feature", "conversation", "plan"],
+            description: "Type of the starting entity",
+          },
+          entity_id: {
+            type: "string",
+            description: "ID of the starting entity",
+          },
+          max_hops: {
+            type: "number",
+            description: "Maximum traversal depth (1-4, default: 2)",
+          },
+          relation: {
+            type: "string",
+            enum: ["depends_on", "informs", "contradicts", "extends", "derived_from", "references", "implements", "tests"],
+            description: "Filter to only this relation type (omit for all)",
+          },
+          project_id: {
+            type: "string",
+            description: "Scope to a project",
+          },
+        },
+        required: ["entity_type", "entity_id"],
+      },
+      _serverId: "__builtin__",
+      _originalName: "graph_query",
+    },
+    {
+      name: `${PREFIX}__graph_related`,
+      description: "[Remb] Get everything related to a feature — its knowledge graph including memories, context entries, conversations, file dependencies, and plans. Perfect for understanding the full context around a feature.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          feature_id: {
+            type: "string",
+            description: "Feature ID to explore",
+          },
+          project_slug: {
+            type: "string",
+            description: "Project slug — used to resolve feature by name",
+          },
+          feature_name: {
+            type: "string",
+            description: "Feature name — alternative to feature_id (requires project_slug)",
+          },
+        },
+      },
+      _serverId: "__builtin__",
+      _originalName: "graph_related",
+    },
   ];
 }
 
@@ -763,59 +846,26 @@ export async function callBuiltinTool(
     }
 
     case "memory_load_context": {
-      // Use build_context_bundle() — single SQL call with priority ranking + token budget.
-      // Replaces separate core + active queries + broken access tracking loop.
-
-      // Resolve plan token budget
-      const { data: userRow } = await db
-        .from("users")
-        .select("plan")
-        .eq("id", userId)
-        .single();
-
-      const { data: planRow } = await db
-        .from("plan_limits")
-        .select("max_token_budget")
-        .eq("plan", userRow?.plan ?? "free")
-        .single();
-
-      const tokenBudget = planRow?.max_token_budget ?? 16000;
-
-      // Optional semantic embedding for relevance ranking
-      let embedding: string | null = null;
-      if (args.query) {
-        try {
-          const vector = await generateEmbedding(args.query as string);
-          embedding = JSON.stringify(vector);
-        } catch { /* fallback: priority-only ranking */ }
-      }
-
-      const { data: bundleRows, error: bundleError } = await db.rpc("build_context_bundle", {
-        p_user_id: userId,
-        p_project_id: (args.project_id as string) ?? null,
-        query_embedding: embedding,
-        token_budget: tokenBudget,
+      // Intelligent retrieval — semantic recall + graph expansion + multi-signal scoring
+      const assembled = await assembleContext({
+        userId,
+        projectId: (args.project_id as string) ?? undefined,
+        query: (args.query as string) ?? undefined,
       });
 
-      if (bundleError) throw new Error(bundleError.message);
-      const rows = (bundleRows ?? []) as Array<{ id: string; tier: string; category: string; title: string; content: string; tags: string[]; token_count: number; access_count: number; similarity: number; cumulative_tokens: number }>;
-
-      // Atomic access tracking in one shot
-      const memoryIds = rows.map((r) => r.id);
-      if (memoryIds.length > 0) {
-        await db.rpc("touch_memories", { memory_ids: memoryIds });
-      }
-
-      const core = rows.filter((r) => r.tier === "core");
-      const active = rows.filter((r) => r.tier === "active");
-      const totalTokens = rows.length > 0 ? Number(rows[rows.length - 1].cumulative_tokens) : 0;
+      const core = assembled.items.filter((i) => i.tier === "core");
+      const active = assembled.items.filter((i) => i.tier === "active" || i.tier === undefined);
+      const conversations = assembled.items.filter((i) => i.kind === "conversation");
+      const context = assembled.items.filter((i) => i.kind === "context_entry");
 
       const result = {
-        core: core.map((r) => ({ id: r.id, tier: r.tier, category: r.category, title: r.title, content: r.content, tags: r.tags, token_count: r.token_count })),
-        active: active.map((r) => ({ id: r.id, tier: r.tier, category: r.category, title: r.title, content: r.content, tags: r.tags, token_count: r.token_count, similarity: r.similarity })),
-        total_tokens: totalTokens,
-        token_budget: tokenBudget,
-        memories_loaded: rows.length,
+        core: core.map((r) => ({ id: r.id, tier: r.tier, category: r.category, title: r.title, content: r.content, tags: r.tags, token_count: r.tokenCount, score: r.score })),
+        active: active.filter((i) => i.kind === "memory").map((r) => ({ id: r.id, tier: r.tier, category: r.category, title: r.title, content: r.content, tags: r.tags, token_count: r.tokenCount, score: r.score })),
+        conversations: conversations.map((r) => ({ id: r.id, title: r.title, content: r.content, token_count: r.tokenCount, score: r.score })),
+        context_entries: context.map((r) => ({ id: r.id, title: r.title, content: r.content, token_count: r.tokenCount, score: r.score })),
+        total_tokens: assembled.totalTokens,
+        items_loaded: assembled.items.length,
+        overflow: assembled.overflow,
       };
 
       return {
@@ -2170,6 +2220,186 @@ export async function callBuiltinTool(
 
       if (completeErr) throw new Error(completeErr.message);
       return { content: [{ type: "text", text: JSON.stringify({ completed: completedPlan }, null, 2) }] };
+    }
+
+    // ─── Graph tool implementations ───
+
+    case "graph_query": {
+      const entityType = args.entity_type as string;
+      const entityId = args.entity_id as string;
+      if (!entityType || !entityId) throw new Error("entity_type and entity_id are required");
+
+      const maxHops = Math.min(Math.max((args.max_hops as number) ?? 2, 1), 4);
+      const { getRelatedEntities } = await import("@/lib/graph-actions");
+
+      const results = await getRelatedEntities(userId, entityType, entityId, {
+        maxHops,
+        relationFilter: (args.relation as string) ?? undefined,
+        projectId: (args.project_id as string) ?? undefined,
+      });
+
+      return { content: [{ type: "text", text: JSON.stringify({ entity: { type: entityType, id: entityId }, max_hops: maxHops, results }, null, 2) }] };
+    }
+
+    case "graph_related": {
+      let featureId = args.feature_id as string | undefined;
+
+      // Resolve feature by name + project slug
+      if (!featureId && args.feature_name && args.project_slug) {
+        const { data: project } = await db
+          .from("projects")
+          .select("id")
+          .eq("user_id", userId)
+          .eq("slug", args.project_slug as string)
+          .single();
+
+        if (!project) throw new Error(`Project "${args.project_slug}" not found`);
+
+        const { data: feature } = await db
+          .from("features")
+          .select("id")
+          .eq("project_id", project.id)
+          .ilike("name", args.feature_name as string)
+          .limit(1)
+          .single();
+
+        if (!feature) throw new Error(`Feature "${args.feature_name}" not found`);
+        featureId = feature.id;
+      }
+
+      if (!featureId) throw new Error("feature_id is required, or provide project_slug + feature_name");
+
+      const { getFeatureKnowledgeGraph } = await import("@/lib/graph-actions");
+      const graph = await getFeatureKnowledgeGraph(userId, featureId);
+
+      // Group by entity type for readability
+      const grouped: Record<string, unknown[]> = {};
+      for (const node of graph) {
+        const key = node.entity_type;
+        if (!grouped[key]) grouped[key] = [];
+        grouped[key].push(node);
+      }
+
+      return { content: [{ type: "text", text: JSON.stringify({ feature_id: featureId, knowledge_graph: grouped, total_relations: graph.length }, null, 2) }] };
+    }
+
+    case "cross_project_patterns": {
+      const patternQuery = args.pattern_query as string;
+      if (!patternQuery) throw new Error("pattern_query is required");
+      const limit = Math.min((args.limit as number) ?? 10, 25);
+
+      // Get all user projects
+      const { data: allProjects } = await db
+        .from("projects")
+        .select("id, name, slug")
+        .eq("user_id", userId)
+        .eq("status", "active");
+
+      if (!allProjects?.length) {
+        return { content: [{ type: "text", text: JSON.stringify({ patterns: [], message: "No projects found" }) }] };
+      }
+
+      const projectMap = new Map(allProjects.map((p) => [p.id, p]));
+
+      // If source project specified, get its patterns first
+      let sourceContext: Array<{ feature: string; content: string; project: string }> = [];
+      if (args.source_project_slug) {
+        const sourceProj = allProjects.find((p) => p.slug === args.source_project_slug);
+        if (sourceProj) {
+          const { data: sourceFeatures } = await db
+            .from("features")
+            .select("id, name")
+            .eq("project_id", sourceProj.id)
+            .or(`name.ilike.%${patternQuery}%,description.ilike.%${patternQuery}%`)
+            .limit(5);
+
+          if (sourceFeatures?.length) {
+            const featureIds = sourceFeatures.map((f) => f.id);
+            const { data: entries } = await db
+              .from("context_entries")
+              .select("content, feature_id")
+              .in("feature_id", featureIds)
+              .limit(10);
+
+            sourceContext = (entries ?? []).map((e) => ({
+              feature: sourceFeatures.find((f) => f.id === e.feature_id)?.name ?? "unknown",
+              content: e.content.slice(0, 500),
+              project: sourceProj.slug,
+            }));
+          }
+        }
+      }
+
+      // Search pattern-category memories across all projects
+      let embedding: number[];
+      try {
+        embedding = await generateEmbedding(patternQuery);
+      } catch {
+        return { content: [{ type: "text", text: "Failed to generate embedding for pattern search." }] };
+      }
+
+      const { data: patternMemories } = await db.rpc("search_memories", {
+        p_user_id: userId,
+        query_embedding: JSON.stringify(embedding),
+        match_count: limit * 2,
+      });
+
+      // Group by project and filter for pattern/decision/knowledge categories
+      const relevantCategories = new Set(["pattern", "decision", "knowledge"]);
+      const patterns: Array<{
+        project: string;
+        title: string;
+        content: string;
+        category: string;
+        similarity: number;
+      }> = [];
+
+      for (const m of (patternMemories ?? []) as unknown as Array<{ title: string; content: string; category: string; project_id: string | null; similarity: number }>) {
+        if (!relevantCategories.has(m.category)) continue;
+        const proj = m.project_id ? projectMap.get(m.project_id) : null;
+        patterns.push({
+          project: proj?.slug ?? "global",
+          title: m.title,
+          content: m.content.slice(0, 400),
+          category: m.category,
+          similarity: m.similarity,
+        });
+      }
+
+      // Also find features with similar names/descriptions across projects
+      const allProjectIds = allProjects.map((p) => p.id);
+      const { data: crossFeatures } = await db
+        .from("features")
+        .select("name, description, project_id")
+        .in("project_id", allProjectIds)
+        .or(`name.ilike.%${patternQuery}%,description.ilike.%${patternQuery}%`)
+        .limit(limit);
+
+      const featureMatches = (crossFeatures ?? []).map((f) => ({
+        project: projectMap.get(f.project_id)?.slug ?? "unknown",
+        feature: f.name,
+        description: f.description?.slice(0, 300) ?? null,
+      }));
+
+      // Group patterns by project for easy comparison
+      const byProject: Record<string, typeof patterns> = {};
+      for (const p of patterns.slice(0, limit)) {
+        if (!byProject[p.project]) byProject[p.project] = [];
+        byProject[p.project].push(p);
+      }
+
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            query: patternQuery,
+            source_context: sourceContext.length > 0 ? sourceContext : undefined,
+            patterns_by_project: byProject,
+            feature_matches: featureMatches,
+            total_patterns: patterns.length,
+          }, null, 2),
+        }],
+      };
     }
 
     default:

@@ -228,6 +228,24 @@ const PLAN_TOOLS: OpenAI.ChatCompletionTool[] = [
       parameters: { type: "object", properties: {} },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "search_across_projects",
+      description:
+        "Search for files, features, and context entries across ALL of the user's projects. Use this when the user drops files from other projects as context or asks about code in a different project.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "File path fragment or keyword to search for (e.g. 'donations/page', 'bento-grid', 'trades')",
+          },
+        },
+        required: ["query"],
+      },
+    },
+  },
 ];
 
 /* ─── Tool execution ─── */
@@ -311,6 +329,52 @@ async function executePlanTool(
         .order("sort_order", { ascending: true });
       return JSON.stringify({ phases: phases ?? [] });
     }
+    case "search_across_projects": {
+      const query = (args.query as string) ?? "";
+      // Get all of the user's projects
+      const { data: userProjects } = await db
+        .from("projects")
+        .select("id, name, slug")
+        .eq("user_id", context.userId)
+        .eq("status", "active");
+      const projectIds = (userProjects ?? []).map((p) => p.id);
+      const projectMap = new Map((userProjects ?? []).map((p) => [p.id, p]));
+
+      // Search file paths
+      const { data: fileDeps } = projectIds.length > 0
+        ? await db
+            .from("file_dependencies")
+            .select("source_path, project_id")
+            .in("project_id", projectIds)
+            .ilike("source_path", `%${query}%`)
+            .limit(40)
+        : { data: [] as { source_path: string; project_id: string }[] };
+
+      const fileResults = (fileDeps ?? []).map((f) => ({
+        path: f.source_path,
+        project: projectMap.get(f.project_id)?.name ?? "Unknown",
+        slug: projectMap.get(f.project_id)?.slug ?? "",
+      }));
+
+      // Search feature names + descriptions
+      const { data: featureResults } = projectIds.length > 0
+        ? await db
+            .from("features")
+            .select("name, description, status, project_id")
+            .in("project_id", projectIds)
+            .or(`name.ilike.%${query}%,description.ilike.%${query}%`)
+            .limit(10)
+        : { data: [] as { name: string; description: string | null; status: string; project_id: string }[] };
+
+      const features = (featureResults ?? []).map((f) => ({
+        name: f.name,
+        description: f.description,
+        status: f.status,
+        project: projectMap.get(f.project_id)?.name ?? "Unknown",
+      }));
+
+      return JSON.stringify({ files: fileResults, features, projects: userProjects ?? [] });
+    }
     default:
       return JSON.stringify({ error: `Unknown tool: ${toolName}` });
   }
@@ -329,9 +393,10 @@ export async function POST(req: NextRequest) {
     planId: string;
     message: string;
     projectSlug: string;
+    referencedProjectIds?: string[];
   };
 
-  const { planId, message, projectSlug } = body;
+  const { planId, message, projectSlug, referencedProjectIds } = body;
   if (!planId || !message || !projectSlug) {
     return new Response("Missing required fields", { status: 400 });
   }
@@ -382,29 +447,75 @@ export async function POST(req: NextRequest) {
   const projectContext = await loadProjectContext(project.id, userId);
   const contextBlock = buildContextBlock(project, projectContext);
 
-  const systemPrompt = `You are an expert software architect helping plan project architecture and implementation strategy. You have deep knowledge of this project from its scanned codebase.
+  // Load contexts for any referenced foreign projects (from attached files)
+  let referencedContextSection = "";
+  const foreignProjectIds = (referencedProjectIds ?? []).filter(
+    (id) => id && id !== project.id,
+  );
+  if (foreignProjectIds.length > 0) {
+    const db2 = createAdminClient();
+    // Verify the user owns all referenced projects before loading
+    const { data: foreignProjects } = await db2
+      .from("projects")
+      .select("id, name, description, language, repo_name")
+      .eq("user_id", userId)
+      .in("id", foreignProjectIds);
 
-# Project: ${project.name}
-${project.description ? `Description: ${project.description}` : ""}
-${project.language ? `Primary Language: ${project.language}` : ""}
-${project.repo_name ? `Repository: ${project.repo_name}` : ""}
+    if (foreignProjects && foreignProjects.length > 0) {
+      const foreignContexts = await Promise.all(
+        foreignProjects.map(async (fp) => ({
+          project: fp,
+          ctx: await loadProjectContext(fp.id, userId),
+        })),
+      );
 
-${contextBlock}
+      const sections = foreignContexts.map(({ project: fp, ctx }) => {
+        const block = buildContextBlock(
+          { name: fp.name, description: fp.description, language: fp.language, repo_name: fp.repo_name },
+          ctx,
+        );
+        return `### ${fp.name}${
+          fp.description ? `\n> ${fp.description}` : ""
+        }${
+          fp.language ? `\nLanguage: ${fp.language}` : ""
+        }${
+          fp.repo_name ? ` | Repo: ${fp.repo_name}` : ""
+        }\n\n${block}`;
+      });
 
-${phases?.length ? `## Current Plan Phases\n${phases.map((p, i) => `${i + 1}. [${p.status}] ${p.title} (id: ${p.id}): ${p.description ?? ""}`).join("\n")}` : "No phases defined yet."}
+      referencedContextSection = `\n\n## Referenced Projects Context\n\nThe user attached files from the following projects. Use this context to understand how those files fit into their codebases:\n\n${sections.join("\n\n---\n\n")}`;
+    }
+  }
 
-Plan title: ${plan.title}
-${plan.description ? `Plan description: ${plan.description}` : ""}
+  const systemPrompt = `You are a senior software architect embedded in the user's project. You've studied this codebase deeply and you genuinely want to help them build something great.
 
-You have tools to manage plan phases. Use them to:
-- Create phases when the user agrees on a structure
-- Update phase status as work progresses
-- Delete phases that are no longer relevant
-- Fetch project context when you need more or refreshed info
-- List phases to check current state
-- Complete the plan when all work is done
+## How you communicate
 
-Be conversational but action-oriented. Reference specific features, files, and architectural patterns from the project context when making recommendations. When the user describes what they want to build, break it down into concrete phases using the create_phase tool. Always explain what you're doing before calling tools.`;
+- **Be conversational and natural.** Talk like a calm, sharp colleague in a 1-on-1 — not a documentation generator. No walls of bullet points. No corporate fluff.
+- **Be brief.** Short paragraphs. Get to the point. If something needs 2 sentences, don't write 10. If the user asks a simple question, give a simple answer.
+- **Be interactive.** Ask follow-up questions. Check assumptions. "Are you thinking X or Y?" is better than guessing and dumping both. Guide the user through decisions rather than listing every option.
+- **Be specific.** Reference actual files, features, and patterns from the project. Say "your auth flow in \`lib/auth.ts\`" not "your authentication system." You know this codebase — show it.
+- **Explain the why, not just the what.** When recommending an approach, briefly explain the reasoning. One sentence of context beats a page of instructions.
+- **Use markdown naturally** — code snippets, bold for emphasis, short lists when they genuinely help. But don't format for the sake of formatting.
+
+## What you know about this project
+
+# ${project.name}
+${project.description ? `${project.description}\n` : ""}${project.language ? `Language: ${project.language} | ` : ""}${project.repo_name ? `Repo: ${project.repo_name}` : ""}
+
+${contextBlock}${referencedContextSection}
+
+## Current plan state
+
+Plan: **${plan.title}**${plan.description ? ` — ${plan.description}` : ""}
+
+${phases?.length ? `Phases:\n${phases.map((p, i) => `${i + 1}. [${p.status}] ${p.title} (id: ${p.id})${p.description ? `: ${p.description}` : ""}`).join("\n")}` : "No phases yet."}
+
+## Your tools
+
+You can create, update, delete phases, fetch fresh project context, list current phases, and complete the plan. Use them naturally during conversation — when the user agrees on a direction or when you need to check something. Don't announce tool calls robotically, just weave them into the flow.
+
+When breaking work into phases, propose them conversationally first ("I'd split this into three parts — X, Y, Z. Sound right?") and only create them once the user confirms or adjusts. Each conversation is saved and adds context for future sessions, so be thoughtful about what you discuss.`;
 
   const messages: OpenAI.ChatCompletionMessageParam[] = [
     { role: "system", content: systemPrompt },

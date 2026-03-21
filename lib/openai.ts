@@ -13,6 +13,11 @@ function getOpenAIClient(): OpenAI {
   return openaiClient;
 }
 
+/** Re-export the singleton client for direct usage */
+export function getOpenAI(): OpenAI {
+  return getOpenAIClient();
+}
+
 /* ─── types ─── */
 
 export interface ImportContext {

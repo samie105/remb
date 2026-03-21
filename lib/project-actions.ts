@@ -696,14 +696,21 @@ function classifyFile(path: string): { nodeType: FileNodeType; routePath?: strin
 export async function getProjectStructureGraph(projectId: string): Promise<ProjectStructureGraph> {
   const db = createAdminClient();
 
-  // ── Parallel fetch: features, entries, and real import dependencies ──
-  const [featuresRes, depsRes] = await Promise.all([
+  // ── Parallel fetch: features, entries, real import dependencies, and entity relations ──
+  const [featuresRes, depsRes, relationsRes] = await Promise.all([
     db.from("features").select("id, name").eq("project_id", projectId),
     db.from("file_dependencies").select("source_path, target_path, import_type, imported_symbols").eq("project_id", projectId),
+    db.from("entity_relations" as never).select("source_type, source_id, target_type, target_id, relation, confidence, metadata" as never).eq("project_id" as never, projectId as never),
   ]);
 
   const features = featuresRes.data ?? [];
   const deps = depsRes.data ?? [];
+  const entityRelations = (relationsRes.data ?? []) as unknown as Array<{
+    source_type: string; source_id: string;
+    target_type: string; target_id: string;
+    relation: string; confidence: number;
+    metadata: Record<string, unknown> | null;
+  }>;
 
   // If no features AND no deps, nothing to show
   if (!features.length && !deps.length) return { nodes: [], edges: [] };
@@ -856,6 +863,56 @@ export async function getProjectStructureGraph(projectId: string): Promise<Proje
           }
         }
       }
+    }
+  }
+
+  // 3. Feature→feature dependency edges from entity_relations (knowledge graph)
+  const featureIdToName = new Map(features.map((f) => [f.id, f.name]));
+  // Build reverse map: feature_id → file_paths (for connecting at the file-node level)
+  const featureToFiles = new Map<string, string[]>();
+  for (const [path, fNames] of fileFeatures) {
+    for (const fname of fNames) {
+      // Find feature ID by name
+      for (const [fid, fn] of featureIdToName) {
+        if (fn === fname) {
+          if (!featureToFiles.has(fid)) featureToFiles.set(fid, []);
+          featureToFiles.get(fid)!.push(path);
+          break;
+        }
+      }
+    }
+  }
+
+  for (const rel of entityRelations) {
+    if (rel.source_type !== "feature" || rel.target_type !== "feature") continue;
+    if (rel.relation !== "depends_on") continue;
+
+    const srcName = featureIdToName.get(rel.source_id);
+    const tgtName = featureIdToName.get(rel.target_id);
+    if (!srcName || !tgtName) continue;
+
+    // Pick representative files for each feature (first file) to create file-level edges
+    const srcFiles = featureToFiles.get(rel.source_id);
+    const tgtFiles = featureToFiles.get(rel.target_id);
+    if (!srcFiles?.length || !tgtFiles?.length) continue;
+
+    // Connect the first file of each feature if no import edge already exists
+    const src = srcFiles[0];
+    const tgt = tgtFiles[0];
+    const importKey = `${src}→${tgt}`;
+    const reverseKey = `${tgt}→${src}`;
+    if (edgeMap.has(importKey) || edgeMap.has(reverseKey)) continue;
+
+    const key = `rel:${src}→${tgt}`;
+    if (!edgeMap.has(key)) {
+      edgeMap.set(key, {
+        id: key,
+        source: src,
+        target: tgt,
+        label: `${srcName} → ${tgtName}`,
+        relation: "feature",
+        weight: Math.ceil(rel.confidence * 2),
+      });
     }
   }
 

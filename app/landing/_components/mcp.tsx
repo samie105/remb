@@ -24,7 +24,7 @@ export function McpSection() {
 
         <p className="text-center max-w-2xl mx-auto mb-12 md:mb-16">
           <BlurReveal
-            text="MCP is the open protocol that lets AI assistants connect to external tools. Remb exposes 21 tools as a first-class MCP server — meaning Claude, Cursor, Windsurf, VS Code Copilot, and any MCP client can access your project memory natively."
+            text="MCP is the open protocol that lets AI assistants connect to external tools. Remb exposes 33 tools as a first-class MCP server — meaning Claude, Cursor, Windsurf, VS Code Copilot, and any MCP client can access your project memory natively."
             className="text-[oklch(0.5_0_0)] text-[13px] md:text-[14px] leading-relaxed"
           />
         </p>
@@ -56,7 +56,7 @@ export function McpSection() {
           <div className="space-y-4">
             <div className="reveal-card opacity-0">
               <p className="text-[11px] font-semibold tracking-[0.06em] uppercase text-[oklch(0.4_0_0)] mb-2">
-                Cursor / Claude Desktop
+                Remote (HTTP)
               </p>
               <div className="relative rounded-xl border border-[oklch(1_0_0/8%)] bg-[oklch(0.13_0_0)] p-4 md:p-5 font-mono text-[12px] md:text-[13px]">
                 <TermDots label="mcp config" />

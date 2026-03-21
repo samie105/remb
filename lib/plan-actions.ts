@@ -416,3 +416,45 @@ export async function generatePlanMarkdown(projectSlug: string): Promise<string>
 
   return md;
 }
+
+/* ─── project files for context picker ─── */
+
+export interface ProjectFileInfo {
+  id: string;
+  name: string;
+  slug: string;
+}
+
+export async function getProjectsForPicker(): Promise<ProjectFileInfo[]> {
+  const user = await requireUser();
+  const db = createAdminClient();
+
+  const { data, error } = await db
+    .from("projects")
+    .select("id, name, slug")
+    .eq("user_id", user.id)
+    .eq("status", "active")
+    .order("updated_at", { ascending: false });
+
+  if (error) throw new Error(error.message);
+  return (data ?? []) as ProjectFileInfo[];
+}
+
+export async function getProjectFiles(projectId: string): Promise<string[]> {
+  await requireUser();
+  const db = createAdminClient();
+
+  const { data, error } = await db
+    .from("file_dependencies")
+    .select("source_path, target_path")
+    .eq("project_id", projectId);
+
+  if (error) throw new Error(error.message);
+
+  const paths = new Set<string>();
+  for (const d of data ?? []) {
+    paths.add(d.source_path);
+    paths.add(d.target_path);
+  }
+  return [...paths].sort();
+}

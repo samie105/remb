@@ -5,6 +5,7 @@ import type { ApiClient } from "./api-client";
 import type { WorkspaceDetector } from "./workspace";
 import type { AuthManager } from "./auth";
 import type { SyncStatusResponse } from "./types";
+import type { EventBus } from "./event-bus";
 
 const execFileAsync = promisify(execFile);
 
@@ -20,8 +21,9 @@ export type SyncState =
   | { kind: "unauthenticated" };
 
 /**
- * SyncManager — periodically checks sync status and exposes state for
- * the status bar, changes tree view, and commands.
+ * SyncManager — checks sync status via periodic polling.
+ * Uses a lightweight digest endpoint to detect changes, only
+ * running a full sync check when the digest actually changes.
  */
 export class SyncManager {
   private _onDidChangeSyncState = new vscode.EventEmitter<SyncState>();
@@ -30,6 +32,9 @@ export class SyncManager {
   private _state: SyncState = { kind: "unauthenticated" };
   private _response: SyncStatusResponse | null = null;
   private _timer: ReturnType<typeof setInterval> | undefined;
+  private _digestTimer: ReturnType<typeof setInterval> | undefined;
+  private _lastDigest: string | null = null;
+  private _eventBus: EventBus | null = null;
   private disposables: vscode.Disposable[] = [];
 
   get state() {
@@ -46,7 +51,10 @@ export class SyncManager {
     private auth: AuthManager
   ) {
     this.disposables.push(
-      workspace.onDidChangeProject(() => this.check()),
+      workspace.onDidChangeProject(() => {
+        this._lastDigest = null;
+        this.check();
+      }),
       auth.onDidChangeAuth(() => {
         // Delay after login so the API key INSERT has time to commit
         setTimeout(() => this.check(), 2_000);
@@ -54,10 +62,18 @@ export class SyncManager {
     );
   }
 
-  /** Start periodic sync checking (every 2 minutes). */
+  /** Set the event bus for emitting context:updated events. */
+  setEventBus(bus: EventBus) {
+    this._eventBus = bus;
+  }
+
+  /** Start periodic sync checking. Full check every 2 min, digest poll every 30s. */
   start() {
     this.check();
+    // Full sync check every 2 minutes
     this._timer = setInterval(() => this.check(), 120_000);
+    // Lightweight digest poll every 30 seconds for change detection
+    this._digestTimer = setInterval(() => this.pollDigest(), 30_000);
   }
 
   /** Manually trigger a sync check. */
@@ -107,8 +123,78 @@ export class SyncManager {
 
   dispose() {
     if (this._timer) clearInterval(this._timer);
+    if (this._digestTimer) clearInterval(this._digestTimer);
     this._onDidChangeSyncState.dispose();
     this.disposables.forEach((d) => d.dispose());
+  }
+
+  /**
+   * Lightweight digest poll — hits the cheap /api/cli/events/stream endpoint,
+   * compares the digest string, and fires events only when something changed.
+   * Works perfectly on Vercel serverless (single stateless request).
+   */
+  private async pollDigest() {
+    const slug = this.workspace.projectSlug;
+    const isAuth = await this.auth.isAuthenticated();
+    if (!slug || !isAuth) return;
+
+    try {
+      const apiKey = await this.api.getApiKey();
+      if (!apiKey) return;
+
+      const baseUrl = this.api.getBaseUrl();
+      const url = `${baseUrl}/api/cli/events/stream?projectSlug=${encodeURIComponent(slug)}`;
+
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+
+      if (!res.ok) return;
+
+      const body = await res.json() as {
+        digest: string;
+        projectStatus: string;
+        lastScanStatus: string;
+      };
+
+      if (!body.digest) return;
+
+      // First poll — just store the baseline
+      if (this._lastDigest === null) {
+        this._lastDigest = body.digest;
+        return;
+      }
+
+      // No change
+      if (body.digest === this._lastDigest) return;
+
+      // Something changed — update digest and react
+      const oldDigest = this._lastDigest;
+      this._lastDigest = body.digest;
+
+      // Parse old vs new to determine what changed
+      const [oldStatus] = oldDigest.split("|");
+      const newStatus = body.projectStatus;
+
+      // Scan status transitions
+      if (newStatus === "scanning" && oldStatus !== "scanning") {
+        this.setState({ kind: "scanning" });
+      } else if (oldStatus === "scanning" && newStatus !== "scanning") {
+        // Scan finished — do a full check to get updated SHA/state
+        this.check();
+      }
+
+      // Emit context:updated through event bus for any digest change
+      if (this._eventBus) {
+        this._eventBus.emit("context:updated", {
+          source: "manual",
+          projectSlug: slug,
+          timestamp: Date.now(),
+        });
+      }
+    } catch {
+      // Network error — non-fatal, will retry next cycle
+    }
   }
 }
 

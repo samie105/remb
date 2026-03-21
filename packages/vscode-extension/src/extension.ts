@@ -12,6 +12,7 @@ import { SyncManager, ChangesTreeProvider } from "./sync";
 import { InstructionsManager } from "./instructions";
 import { SessionTracker } from "./session-tracker";
 import { ContextMirror } from "./context-mirror";
+import { EventBus } from "./event-bus";
 
 /** Module-level ref so deactivate() can log the session end. */
 let sessionTracker: SessionTracker | undefined;
@@ -39,6 +40,9 @@ export async function activate(context: vscode.ExtensionContext) {
   // ── API client ────────────────────────────────────────────
   const api = new ApiClient(() => auth.getApiKey());
 
+  // ── Event bus (central coordination) ──────────────────────
+  const eventBus = new EventBus();
+
   // Let the API client try CLI credential import on 401 before prompting
   api.setCliImporter(() => auth.tryImportFromCli(true));
 
@@ -49,6 +53,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // ── Sync detection ────────────────────────────────────────
   const syncManager = new SyncManager(api, workspace, auth);
+  syncManager.setEventBus(eventBus);
 
   // ── Status bar (with sync state) ──────────────────────────
   const statusBar = new StatusBar(auth, workspace, api, syncManager);
@@ -57,8 +62,8 @@ export async function activate(context: vscode.ExtensionContext) {
   const capture = new ConversationCapture(api, workspace, auth, context.storageUri);
   conversationCapture = capture;
 
-  // ── LM Tools (Copilot auto-invokable, with capture) ──────
-  registerLmTools(context, api, workspace, capture);
+  // ── LM Tools (Copilot auto-invokable, with capture + event bus) ──
+  registerLmTools(context, api, workspace, capture, eventBus);
 
   // ── @remb chat participant (with capture) ─────────────────
   registerChatParticipant(context, api, workspace, capture);
@@ -168,6 +173,14 @@ export async function activate(context: vscode.ExtensionContext) {
   capture.setSyncDynamic(() => instructions.syncDynamic());
   capture.start();
 
+  // ── Event-driven context refreshes ────────────────────────
+  // When context changes are detected (via digest poll, scan completion, or MCP tool),
+  // refresh instructions and context mirror instead of relying only on timers.
+  eventBus.on("context:updated", () => {
+    instructions.syncDynamic().catch(() => {});
+    mirror.fullSync().catch(() => {});
+  });
+
   // ── Session lifecycle tracking ────────────────────────────
   const tracker = new SessionTracker(api, workspace, auth);
   sessionTracker = tracker;
@@ -181,7 +194,7 @@ export async function activate(context: vscode.ExtensionContext) {
   mirror.start();
 
   // ── Disposables ───────────────────────────────────────────
-  context.subscriptions.push(auth, workspace, statusBar, syncManager, instructions, capture, tracker, mirror, api);
+  context.subscriptions.push(auth, workspace, statusBar, syncManager, instructions, capture, tracker, mirror, api, eventBus);
 }
 
 export async function deactivate(): Promise<void> {

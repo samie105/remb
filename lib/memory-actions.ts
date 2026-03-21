@@ -186,6 +186,13 @@ export async function createMemory(input: CreateMemoryInput): Promise<MemoryRow>
     .single();
 
   if (error || !data) throw new Error(error?.message ?? "Failed to create memory");
+
+  // Fire-and-forget: check for contradictions with existing memories
+  if (embedding) {
+    void detectContradictions(db, user.id, data.id, input.projectId ?? null, embedding)
+      .catch(() => {});
+  }
+
   return data;
 }
 
@@ -269,7 +276,7 @@ export async function changeTier(id: string, newTier: MemoryTier): Promise<Memor
       .single();
 
     if (memory) {
-      updates.compressed_content = compressContent(memory.title, memory.content);
+      updates.compressed_content = await compressContent(memory.title, memory.content);
     }
   }
 
@@ -290,19 +297,44 @@ export async function changeTier(id: string, newTier: MemoryTier): Promise<Memor
   return data;
 }
 
-/** Simple content compression: extract key sentences and trim */
-function compressContent(title: string, content: string): string {
+/** AI-powered content compression using GPT-4.1-nano.
+ *  Falls back to simple extraction if the AI call fails. */
+async function compressContent(title: string, content: string): Promise<string> {
+  // Short content doesn't need compression
+  if (content.length < 200) return content;
+
+  try {
+    const { getOpenAI } = await import("@/lib/openai");
+    const response = await getOpenAI().chat.completions.create({
+      model: "gpt-4.1-nano",
+      max_tokens: 300,
+      temperature: 0,
+      messages: [
+        {
+          role: "system",
+          content:
+            "Compress the following memory into a dense, information-preserving summary. " +
+            "Keep all key facts, decisions, code patterns, and technical details. " +
+            "Remove redundancy, filler, and obvious context. " +
+            "Target ~30% of the original length. Output ONLY the compressed text.",
+        },
+        { role: "user", content: `Title: ${title}\n\n${content}` },
+      ],
+    });
+    const compressed = response.choices[0]?.message?.content?.trim();
+    if (compressed && compressed.length > 0) return compressed;
+  } catch {
+    /* fall through to simple extraction */
+  }
+
+  // Fallback: extract key sentences
   const sentences = content.split(/[.!?\n]+/).filter((s) => s.trim().length > 10);
   if (sentences.length <= 3) return content;
-  // Keep first, middle, and last sentences as a summary
-  const summary = [
+  return `${title}: ${[
     sentences[0],
     sentences[Math.floor(sentences.length / 2)],
     sentences[sentences.length - 1],
-  ]
-    .map((s) => s.trim())
-    .join(". ");
-  return `${title}: ${summary}.`;
+  ].map((s) => s.trim()).join(". ")}.`;
 }
 
 /* ─── Stats ─── */
@@ -853,4 +885,126 @@ function buildContextMarkdown(
   }
 
   return lines.join("\n");
+}
+
+/* ─── Contradiction detection ─── */
+
+/**
+ * Checks if a newly created memory contradicts any existing memories.
+ * If contradictions are found:
+ * 1. Creates 'contradicts' entity_relation between the two memories
+ * 2. Adds 'needs_review' tag to both memories
+ * 3. Stores contradiction details in the relation metadata
+ */
+async function detectContradictions(
+  db: ReturnType<typeof createAdminClient>,
+  userId: string,
+  memoryId: string,
+  projectId: string | null,
+  embeddingJson: string,
+): Promise<void> {
+  // Find top-5 similar memories (excluding self)
+  const { data: similar } = await db.rpc("search_memories", {
+    p_user_id: userId,
+    p_project_id: projectId ?? undefined,
+    query_embedding: embeddingJson,
+    match_count: 6,
+  });
+
+  const candidates = similar
+    ?.filter((s) => s.id !== memoryId && s.similarity >= 0.75)
+    ?? [];
+
+  if (candidates.length === 0) return;
+
+  // Get the new memory content
+  const { data: newMemory } = await db
+    .from("memories")
+    .select("title, content")
+    .eq("id", memoryId)
+    .single();
+  if (!newMemory) return;
+
+  // Ask GPT-4.1-nano to check for contradictions
+  const candidateList = candidates
+    .slice(0, 5)
+    .map((c, i) => `[${i}] ${c.title}: ${c.content.slice(0, 300)}`)
+    .join("\n\n");
+
+  try {
+    const { getOpenAI: getAI } = await import("@/lib/openai");
+    const response = await getAI().chat.completions.create({
+      model: "gpt-4.1-nano",
+      max_tokens: 200,
+      temperature: 0,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You check if a new memory contradicts any existing ones. " +
+            "A contradiction means the new memory asserts something that directly conflicts with an existing memory " +
+            "(e.g., different tech choice, opposite pattern, corrected information). " +
+            'Respond with JSON: {"contradictions": [{"index": 0, "reason": "brief explanation"}]} ' +
+            "or {\"contradictions\": []} if none.",
+        },
+        {
+          role: "user",
+          content:
+            `NEW MEMORY: ${newMemory.title}\n${newMemory.content}\n\n` +
+            `EXISTING MEMORIES:\n${candidateList}`,
+        },
+      ],
+    });
+
+    const text = response.choices[0]?.message?.content?.trim();
+    if (!text) return;
+
+    let result: { contradictions: Array<{ index: number; reason: string }> };
+    try {
+      result = JSON.parse(text);
+    } catch {
+      return;
+    }
+
+    if (!result.contradictions?.length) return;
+
+    // Process each contradiction
+    for (const c of result.contradictions) {
+      const candidate = candidates[c.index];
+      if (!candidate) continue;
+
+      // Create 'contradicts' entity_relation
+      await db
+        .from("entity_relations" as never)
+        .insert({
+          user_id: userId,
+          project_id: projectId,
+          source_type: "memory",
+          source_id: memoryId,
+          target_type: "memory",
+          target_id: candidate.id,
+          relation: "contradicts",
+          confidence: candidate.similarity,
+          metadata: { reason: c.reason },
+        } as never)
+        .then(undefined, () => {});
+
+      // Tag both memories with 'needs_review'
+      for (const id of [memoryId, candidate.id]) {
+        const { data: mem } = await db
+          .from("memories")
+          .select("tags")
+          .eq("id", id)
+          .single();
+        if (mem && !mem.tags?.includes("needs_review")) {
+          await db
+            .from("memories")
+            .update({ tags: [...(mem.tags ?? []), "needs_review"] })
+            .eq("id", id);
+        }
+      }
+    }
+  } catch {
+    // Non-fatal — contradiction detection is best-effort
+  }
 }

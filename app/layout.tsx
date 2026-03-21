@@ -4,6 +4,7 @@ import "./globals.css";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ServiceWorkerRegistration } from "@/components/service-worker-registration";
+import { GlobalChat } from "@/components/dashboard/global-chat";
 
 const publicSans = Public_Sans({
   subsets: ["latin"],
@@ -55,6 +56,7 @@ export default function RootLayout({
         >
           <TooltipProvider delayDuration={0}>
             {children}
+            <GlobalChat />
             <ServiceWorkerRegistration />
           </TooltipProvider>
         </ThemeProvider>

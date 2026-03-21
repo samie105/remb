@@ -270,11 +270,22 @@ export function ScannerSection({ project }: ScannerSectionProps) {
                     <HugeiconsIcon icon={Loading03Icon} strokeWidth={2} className="size-5 text-muted-foreground animate-spin" />
                   </div>
                   <div>
-                    <p className="text-[14px] font-semibold text-foreground">Scan in progress</p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-[14px] font-semibold text-foreground">Scan in progress</p>
+                      {latestResult?._is_smart_scan && (
+                        <Badge variant="outline" className="h-4 text-[9px] px-1.5 border-blue-500/30 text-blue-600 dark:text-blue-400">
+                          Smart Scan
+                        </Badge>
+                      )}
+                    </div>
                     <p className="text-[12px] text-muted-foreground mt-0.5">
                       {latestResult?.files_scanned != null
-                        ? `${latestResult.files_scanned}/${latestResult.files_total} files processed`
-                        : "Initializing..."}
+                        ? latestResult.files_scanned < latestResult.files_total
+                          ? `${latestResult.files_scanned} changed files processed (${latestResult.files_total - latestResult.files_scanned} unchanged skipped)`
+                          : `${latestResult.files_scanned}/${latestResult.files_total} files processed`
+                        : latestResult?._estimated_changed_files != null
+                          ? `~${latestResult._estimated_changed_files} changed files to process (${latestResult._estimated_files} total)`
+                          : "Initializing..."}
                     </p>
                   </div>
                 </div>
@@ -499,12 +510,19 @@ export function ScannerSection({ project }: ScannerSectionProps) {
                             {badge.label}
                           </Badge>
                           <span className="text-[11px] text-muted-foreground">
-                            {job.triggered_by === "manual" ? "Manual" : job.triggered_by}
+                            {job.triggered_by === "manual" ? "Manual" : job.triggered_by === "webhook" ? "Push" : job.triggered_by}
                           </span>
+                          {result && (result.files_scanned ?? 0) < (result.files_total ?? 0) && (result.files_total ?? 0) > 0 && (
+                            <Badge variant="outline" className="h-3.5 text-[8px] px-1 border-blue-500/30 text-blue-600 dark:text-blue-400">
+                              Smart
+                            </Badge>
+                          )}
                         </div>
                         <p className="mt-0.5 text-xs text-muted-foreground truncate">
                           {result
-                            ? `${result.files_scanned ?? 0} files · ${result.features_created ?? 0} features · ${result.entries_created ?? 0} entries`
+                            ? (result.files_scanned ?? 0) < (result.files_total ?? 0)
+                              ? `${result.files_scanned ?? 0} changed · ${result.features_created ?? 0} features · ${(result.files_total ?? 0) - (result.files_scanned ?? 0)} skipped`
+                              : `${result.files_scanned ?? 0} files · ${result.features_created ?? 0} features · ${result.entries_created ?? 0} entries`
                             : job.status === "running" ? "Scanning in progress..." : "Queued..."}
                         </p>
                       </div>

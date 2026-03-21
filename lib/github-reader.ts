@@ -1,5 +1,3 @@
-import { extract as tarExtract } from "tar-stream";
-
 const GITHUB_API = "https://api.github.com";
 
 /* ─── types ─── */
@@ -346,6 +344,13 @@ export async function downloadRepoContents(
   // GitHub returns a gzipped tarball — decompress and parse
   const { Readable } = await import("node:stream");
   const { createGunzip } = await import("node:zlib");
+
+  // Dynamic import with CJS interop fallback — avoids Next.js bundler issues
+  const tarMod = await import("tar-stream");
+  const tarExtract: () => ReturnType<typeof import("tar-stream")["extract"]> =
+    typeof tarMod.extract === "function"
+      ? tarMod.extract
+      : (tarMod as unknown as { default: { extract: typeof tarMod.extract } }).default.extract;
 
   const buffer = Buffer.from(await res.arrayBuffer());
   const extractor = tarExtract();

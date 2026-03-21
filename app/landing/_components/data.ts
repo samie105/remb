@@ -147,7 +147,8 @@ export const MCP_CAPS: McpCapItem[] = [
 export const MCP_REMOTE_CONFIG = `{
   "mcpServers": {
     "remb": {
-      "url": "https://mcp.useremb.com/sse"
+      "type": "http",
+      "url": "https://www.useremb.com/api/mcp"
     }
   }
 }`;
@@ -156,7 +157,7 @@ export const MCP_LOCAL_CONFIG = `{
   "mcpServers": {
     "remb": {
       "command": "remb",
-      "args": ["serve", "--project", "my-app"]
+      "args": ["serve"]
     }
   }
 }`;

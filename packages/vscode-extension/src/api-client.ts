@@ -37,9 +37,19 @@ export class ApiClient {
   private _lastLoginAt = 0;
   private _tryImportFromCli?: () => Promise<boolean>;
 
-  constructor(private getApiKey: () => Promise<string | undefined>) {
+  constructor(private _getApiKey: () => Promise<string | undefined>) {
     const config = vscode.workspace.getConfiguration("remb");
     this.baseUrl = (config.get<string>("apiUrl") ?? "https://www.useremb.com").replace(/\/+$/, "");
+  }
+
+  /** Public accessor for the API key (used by SSE client). */
+  getApiKey(): Promise<string | undefined> {
+    return this._getApiKey();
+  }
+
+  /** Public accessor for the base URL (used by SSE client). */
+  getBaseUrl(): string {
+    return this.baseUrl;
   }
 
   /** Set a callback to attempt CLI credential import on auth failure. */

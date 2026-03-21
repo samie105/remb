@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import { ApiError, type ApiClient } from "./api-client";
 import type { WorkspaceDetector } from "./workspace";
 import { type ConversationCapture, wrapToolWithCapture } from "./conversation-capture";
+import type { EventBus } from "./event-bus";
 
 /**
  * Registers VS Code Language Model Tools that Copilot can invoke autonomously.
@@ -9,16 +10,40 @@ import { type ConversationCapture, wrapToolWithCapture } from "./conversation-ca
  *
  * When a `capture` instance is provided, every tool invocation is silently
  * recorded so the extension can auto-log conversation activity.
+ *
+ * When an `eventBus` is provided, tool invocations and results are emitted
+ * as events for cross-component coordination (e.g. triggering context refreshes).
  */
 export function registerLmTools(
   context: vscode.ExtensionContext,
   api: ApiClient,
   workspace: WorkspaceDetector,
   capture?: ConversationCapture,
+  eventBus?: EventBus,
 ): void {
-  /** Register a tool, optionally wrapping it with passive capture. */
+  /** Register a tool, optionally wrapping it with passive capture and event bus emission. */
   function reg<T>(name: string, tool: vscode.LanguageModelTool<T>): void {
-    const wrapped = capture ? wrapToolWithCapture(capture, name, tool) : tool;
+    let wrapped: vscode.LanguageModelTool<T> = tool;
+    if (capture) wrapped = wrapToolWithCapture(capture, name, wrapped);
+    if (eventBus) {
+      const inner = wrapped;
+      wrapped = {
+        async invoke(options, token) {
+          const start = Date.now();
+          eventBus.emit("tool:invoked", { toolName: name, args: options.input as Record<string, unknown>, timestamp: start });
+          const result = await inner.invoke(options, token);
+          eventBus.emit("tool:result", {
+            toolName: name,
+            args: options.input as Record<string, unknown>,
+            result: null, // don't capture sensitive result data
+            durationMs: Date.now() - start,
+            timestamp: Date.now(),
+          });
+          return result;
+        },
+        prepareInvocation: inner.prepareInvocation?.bind(inner),
+      };
+    }
     context.subscriptions.push(vscode.lm.registerTool(name, wrapped));
   }
   function resolveSlug(input?: string): string | undefined {

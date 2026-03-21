@@ -7,6 +7,7 @@ import {
   findDuplicateConversation,
   searchConversations,
   type RawConversationEvent,
+  type ExtractedKnowledge,
 } from "@/lib/conversation-summarizer";
 import { generateEmbedding } from "@/lib/openai";
 
@@ -142,8 +143,8 @@ export async function logConversation(input: LogConversationInput) {
 /* ─── log smart conversation (raw events → AI summarize → embed → dedup → store) ─── */
 
 export async function logSmartConversation(input: LogSmartConversationInput) {
-  // Step 1: AI summarize the raw events
-  const { summary, tags, embedding } = await summarizeConversation(
+  // Step 1: AI summarize the raw events (now with knowledge extraction)
+  const { summary, tags, embedding, extractedKnowledge, referencedFeatures, referencedFiles } = await summarizeConversation(
     input.events,
     input.projectSlug ?? undefined,
   );
@@ -157,10 +158,13 @@ export async function logSmartConversation(input: LogSmartConversationInput) {
     ),
   ];
 
-  // Merge files_changed into metadata
+  // Merge files_changed + referenced data into metadata
   const metadata = {
     ...(input.metadata ?? {}),
     ...(filesChanged.length > 0 ? { files_changed: filesChanged } : {}),
+    ...(referencedFeatures.length > 0 ? { referenced_features: referencedFeatures } : {}),
+    ...(referencedFiles.length > 0 ? { referenced_files: referencedFiles } : {}),
+    ...(extractedKnowledge.length > 0 ? { extracted_knowledge: extractedKnowledge } : {}),
   };
 
   // Step 2: Dedup check
@@ -206,13 +210,32 @@ export async function logSmartConversation(input: LogSmartConversationInput) {
   // Step 3: Insert new entry
   const db = createAdminClient();
 
+  // Thread assignment: find an existing thread or create a new one
+  let threadId: string | null = null;
+  try {
+    const { data: existingThread } = await db.rpc("find_conversation_thread" as never, {
+      p_user_id: input.userId,
+      p_project_id: input.projectId ?? null,
+      query_embedding: `[${embedding.join(",")}]`,
+    } as never);
+    threadId = (existingThread as string | null) ?? null;
+  } catch {
+    /* thread assignment is non-fatal — will fall-through to new thread */
+  }
+
+  // Generate new thread_id if no existing thread matched
+  const entryId = crypto.randomUUID();
+  if (!threadId) threadId = entryId;
+
   const { data, error } = await db
     .from("conversation_entries")
     .insert({
+      id: entryId,
       user_id: input.userId,
       project_id: input.projectId ?? null,
       project_slug: input.projectSlug ?? null,
       session_id: input.sessionId,
+      thread_id: threadId,
       type: "conversation" as const,
       content: summary,
       tags,
@@ -220,7 +243,7 @@ export async function logSmartConversation(input: LogSmartConversationInput) {
       source: input.source ?? "mcp",
       embedding: `[${embedding.join(",")}]`,
       is_summarized: true,
-    })
+    } as never)
     .select("id, created_at")
     .single();
 
@@ -231,6 +254,14 @@ export async function logSmartConversation(input: LogSmartConversationInput) {
     p_user_id: input.userId,
     keep_count: 1000,
   });
+
+  // Step 4: Auto-create memories from high-confidence extractions (fire-and-forget)
+  if (extractedKnowledge.length > 0 && data?.id) {
+    void autoCreateMemoriesFromKnowledge(
+      db, input.userId, input.projectId ?? null,
+      data.id, extractedKnowledge,
+    ).catch(() => {});
+  }
 
   return { ...data, summary, tags };
 }
@@ -317,6 +348,29 @@ export async function getConversationSessions(userId: string, projectId?: string
     .slice(0, limit);
 }
 
+/* ─── get thread history ─── */
+
+export async function getThreadHistory(userId: string, threadId: string, maxEntries = 50) {
+  const db = createAdminClient();
+  const { data, error } = await db.rpc("get_thread_entries" as never, {
+    p_user_id: userId,
+    p_thread_id: threadId,
+    max_entries: Math.min(maxEntries, 100),
+  } as never);
+
+  if (error) throw new Error(error.message);
+  return (data as Array<{
+    id: string;
+    session_id: string;
+    type: string;
+    content: string;
+    tags: string[];
+    metadata: Record<string, unknown>;
+    source: string;
+    created_at: string;
+  }>) ?? [];
+}
+
 /* ─── generate markdown from entries ─── */
 
 export async function generateConversationMarkdown(input: GetHistoryInput) {
@@ -349,4 +403,101 @@ export async function generateConversationMarkdown(input: GetHistoryInput) {
   }
 
   return lines.join("\n");
+}
+
+/* ─── auto-create memories from extracted knowledge ─── */
+
+/**
+ * Creates memories from high-confidence knowledge extracted during conversation summarization.
+ * For each extraction:
+ * 1. Check for duplicate memory via embedding similarity (cosine > 0.88)
+ * 2. If duplicate: just touch the existing memory (bump access count)
+ * 3. If new: create as active-tier memory with category matching the knowledge type
+ * 4. Create entity_relation linking the conversation to the new memory
+ */
+async function autoCreateMemoriesFromKnowledge(
+  db: ReturnType<typeof createAdminClient>,
+  userId: string,
+  projectId: string | null,
+  conversationEntryId: string,
+  knowledge: ExtractedKnowledge[],
+) {
+  // Check quota before creating — if over limit, skip entirely
+  const { data: withinQuota } = await db.rpc("check_memory_quota", { p_user_id: userId });
+  if (withinQuota === false) return;
+
+  const categoryMap: Record<string, string> = {
+    decision: "decision",
+    pattern: "pattern",
+    correction: "correction",
+    gotcha: "knowledge",
+    preference: "preference",
+  };
+
+  for (const item of knowledge) {
+    if (item.confidence < 0.85) continue;
+
+    // Generate embedding for duplicate check
+    let itemEmbedding: number[];
+    try {
+      itemEmbedding = await generateEmbedding(item.content);
+    } catch {
+      continue; // Can't check duplication without embedding
+    }
+
+    // Search for similar existing memories
+    const { data: similar } = await db.rpc("search_memories", {
+      p_user_id: userId,
+      p_project_id: projectId ?? undefined,
+      query_embedding: `[${itemEmbedding.join(",")}]`,
+      match_count: 3,
+    });
+
+    const existing = similar?.filter((s) => s.similarity >= 0.88)?.[0];
+
+    if (existing) {
+      // Duplicate — just bump access count
+      await db.rpc("touch_memories", { memory_ids: [existing.id] });
+      continue;
+    }
+
+    // New knowledge — create memory
+    const title = item.content.length > 80
+      ? item.content.slice(0, 77) + "..."
+      : item.content;
+
+    const { data: newMemory } = await db
+      .from("memories")
+      .insert({
+        user_id: userId,
+        project_id: projectId,
+        tier: "active" as const,
+        category: (categoryMap[item.type] ?? "general") as "general",
+        title,
+        content: item.content,
+        tags: [item.type, "auto-extracted"],
+        token_count: Math.ceil(item.content.length / 4),
+        embedding: `[${itemEmbedding.join(",")}]`,
+      })
+      .select("id")
+      .single();
+
+    // Link conversation → memory via entity_relations
+    if (newMemory?.id) {
+      await db
+        .from("entity_relations" as never)
+        .insert({
+          user_id: userId,
+          project_id: projectId,
+          source_type: "conversation",
+          source_id: conversationEntryId,
+          target_type: "memory",
+          target_id: newMemory.id,
+          relation: "derived_from",
+          confidence: item.confidence,
+          metadata: { extraction_type: item.type },
+        } as never)
+        .then(undefined, () => { /* non-fatal if entity_relations not migrated yet */ });
+    }
+  }
 }

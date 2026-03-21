@@ -65,6 +65,8 @@ export async function runScan(
   const languages: Record<string, number> = {};
   const techStackSet = new Set<string>();
   const featureIdSet = new Set<string>();
+  // Maps file paths to their extracted feature IDs (for entity relation building)
+  const fileToFeatureId = new Map<string, string>();
   /** All file paths in the repo — used by import parser to resolve relative paths */
   let fileIndex = new Set<string>();
 
@@ -249,8 +251,56 @@ export async function runScan(
     });
 
     // No hard file cap — scan all relevant files (smart-scan skips unchanged ones)
-    const filesToScan = files.filter((f) => !prevShaSet.has(f.sha));
-    const skippedCount = files.length - filesToScan.length;
+    const changedFiles = files.filter((f) => !prevShaSet.has(f.sha));
+    const skippedCount = files.length - changedFiles.length;
+
+    // ── Change propagation: also re-scan consumers of changed files ──
+    // If file B imports file A and A changed, B's analysis may be stale since
+    // it references A's summary. Use the previous scan's dependency graph to
+    // identify these consumers.
+    const changedPaths = new Set(changedFiles.map((f) => f.path));
+    const propagatedPaths = new Set<string>();
+
+    if (changedFiles.length > 0 && changedFiles.length < files.length) {
+      // Load existing file dependencies for reverse lookup
+      const { data: prevDeps } = await db
+        .from("file_dependencies")
+        .select("source_path, target_path")
+        .eq("project_id", projectId);
+
+      if (prevDeps?.length) {
+        // Build reverse graph: target → [sources that import it]
+        const prevReverse = new Map<string, string[]>();
+        for (const d of prevDeps) {
+          const rev = prevReverse.get(d.target_path) ?? [];
+          rev.push(d.source_path);
+          prevReverse.set(d.target_path, rev);
+        }
+
+        // For each changed file, propagate to its direct consumers
+        for (const changedPath of changedPaths) {
+          const consumers = prevReverse.get(changedPath) ?? [];
+          for (const consumer of consumers) {
+            if (!changedPaths.has(consumer)) {
+              propagatedPaths.add(consumer);
+            }
+          }
+        }
+      }
+    }
+
+    // Add propagated files to the scan queue (they exist in `files` but were skipped by SHA check)
+    const propagatedFiles = files.filter((f) => propagatedPaths.has(f.path));
+    const filesToScan = [...changedFiles, ...propagatedFiles];
+
+    if (propagatedFiles.length > 0) {
+      logs.push({
+        timestamp: new Date().toISOString(),
+        file: "",
+        status: "done",
+        message: `Change propagation: ${propagatedFiles.length} consumer(s) queued for re-analysis`,
+      });
+    }
 
     if (skippedCount > 0) {
       logs.push({
@@ -595,6 +645,7 @@ export async function runScan(
         }
 
         featureIdSet.add(featureId);
+        fileToFeatureId.set(filePath, featureId);
 
         const contextContent = JSON.stringify({
           summary: extracted.summary,
@@ -710,6 +761,98 @@ export async function runScan(
 
     // Free content cache — no longer needed
     contentCache.clear();
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // PASS 3: Build entity relations from import graph + feature mappings
+    // ═══════════════════════════════════════════════════════════════════════════
+    try {
+      // Look up user_id for this project (needed for entity_relations)
+      const { data: projectOwner } = await db
+        .from("projects")
+        .select("user_id")
+        .eq("id", projectId)
+        .single();
+
+      if (projectOwner?.user_id && fileToFeatureId.size > 0) {
+        const userId = projectOwner.user_id;
+
+        // Build feature→feature relations from the import graph
+        // If file A imports file B, and A maps to feature X and B maps to feature Y,
+        // then feature X depends_on feature Y
+        const relationRows: Array<{
+          project_id: string;
+          user_id: string;
+          source_type: string;
+          source_id: string;
+          target_type: string;
+          target_id: string;
+          relation: string;
+          confidence: number;
+          metadata: Record<string, unknown>;
+        }> = [];
+
+        const seenRelations = new Set<string>();
+
+        for (const [sourcePath, targets] of importGraph) {
+          const sourceFeatureId = fileToFeatureId.get(sourcePath);
+          if (!sourceFeatureId) continue;
+
+          for (const targetPath of targets) {
+            const targetFeatureId = fileToFeatureId.get(targetPath);
+            if (!targetFeatureId || targetFeatureId === sourceFeatureId) continue;
+
+            // Deduplicate: same feature pair + relation
+            const key = `${sourceFeatureId}:${targetFeatureId}:depends_on`;
+            if (seenRelations.has(key)) continue;
+            seenRelations.add(key);
+
+            relationRows.push({
+              project_id: projectId,
+              user_id: userId,
+              source_type: "feature",
+              source_id: sourceFeatureId,
+              target_type: "feature",
+              target_id: targetFeatureId,
+              relation: "depends_on",
+              confidence: 1.0,
+              metadata: {
+                source_files: [sourcePath],
+                target_files: [targetPath],
+                scan_job_id: scanJobId,
+              },
+            });
+          }
+        }
+
+        // Clear stale relations from previous scans for this project
+        await db
+          .from("entity_relations" as never)
+          .delete()
+          .eq("project_id", projectId)
+          .eq("relation", "depends_on")
+          .eq("source_type", "feature")
+          .eq("target_type", "feature");
+
+        // Bulk insert in chunks
+        if (relationRows.length > 0) {
+          for (let i = 0; i < relationRows.length; i += 500) {
+            const chunk = relationRows.slice(i, i + 500);
+            await db.from("entity_relations" as never).insert(chunk as never).then(undefined, () => { /* non-fatal */ });
+          }
+
+          await pushLog(
+            { timestamp: new Date().toISOString(), file: "", status: "done", message: `Built ${relationRows.length} feature dependency relations` },
+            { files_total: filesTotal, files_scanned: filesProcessed, features_created: featuresCreated, entries_created: entriesCreated, errors, duration_ms: Date.now() - scanStartMs },
+          );
+        }
+      }
+    } catch {
+      // Non-fatal: entity relations are supplementary
+      await pushLog(
+        { timestamp: new Date().toISOString(), file: "", status: "skipped", message: "Entity relations building skipped (non-fatal error)" },
+        { files_total: filesTotal, files_scanned: filesProcessed, features_created: featuresCreated, entries_created: entriesCreated, errors, duration_ms: Date.now() - scanStartMs },
+      );
+    }
 
     // ═══════════════════════════════════════════════════════════════════════════
     // FINALIZE — mark scan as done
