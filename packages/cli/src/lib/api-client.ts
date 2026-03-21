@@ -480,6 +480,28 @@ export function createApiClient(opts: ClientOptions = {}) {
       }>("GET", "/api/cli/conversations/search", undefined, search);
     },
 
+    /** POST /api/cli/conversations/smart — smart conversation logging with raw IDE events */
+    logSmartConversation(params: {
+      events: Array<{
+        type: string;
+        text?: string;
+        path?: string;
+        name?: string;
+        timestamp?: number;
+      }>;
+      projectSlug?: string;
+      metadata?: Record<string, unknown>;
+      ideSource?: string;
+    }) {
+      return request<{
+        logged: boolean;
+        id: string;
+        created_at: string;
+        deduplicated: boolean;
+        summary: string | null;
+      }>("POST", "/api/cli/conversations/smart", params);
+    },
+
     /** GET /api/cli/plans — get active plans with phases */
     getPlans(projectSlug: string) {
       return request<{

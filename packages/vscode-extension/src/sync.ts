@@ -37,6 +37,10 @@ export class SyncManager {
   private _eventBus: EventBus | null = null;
   private disposables: vscode.Disposable[] = [];
 
+  /** Consecutive failure count for exponential backoff on reconnect. */
+  private _failCount = 0;
+  private _reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+
   get state() {
     return this._state;
   }
@@ -92,6 +96,15 @@ export class SyncManager {
       const resp = await this.api.getSyncStatus(slug);
       this._response = resp;
 
+      // Reset failure count on success — connection is healthy
+      if (this._failCount > 0) {
+        this._failCount = 0;
+        if (this._reconnectTimer) {
+          clearTimeout(this._reconnectTimer);
+          this._reconnectTimer = undefined;
+        }
+      }
+
       if (!resp.hasRepo) {
         return this.setState({ kind: "no-repo" });
       }
@@ -111,8 +124,20 @@ export class SyncManager {
         lastScanAt: resp.lastScanAt,
       });
     } catch {
-      return this.setState({ kind: "unknown", message: "Could not check sync status" });
+      this._failCount++;
+      this.scheduleReconnect();
+      return this.setState({ kind: "unknown", message: `Reconnecting… (attempt ${this._failCount})` });
     }
+  }
+
+  /** Schedule a reconnect attempt with exponential backoff. */
+  private scheduleReconnect(): void {
+    if (this._reconnectTimer) return; // Already scheduled
+    const delayMs = Math.min(5_000 * Math.pow(2, this._failCount - 1), 120_000); // 5s, 10s, 20s, 40s, 80s, max 2min
+    this._reconnectTimer = setTimeout(() => {
+      this._reconnectTimer = undefined;
+      this.check();
+    }, delayMs);
   }
 
   private setState(state: SyncState): SyncState {
@@ -124,6 +149,7 @@ export class SyncManager {
   dispose() {
     if (this._timer) clearInterval(this._timer);
     if (this._digestTimer) clearInterval(this._digestTimer);
+    if (this._reconnectTimer) clearTimeout(this._reconnectTimer);
     this._onDidChangeSyncState.dispose();
     this.disposables.forEach((d) => d.dispose());
   }

@@ -71,7 +71,7 @@ function ImportRepoList({
   onImported,
 }: {
   existingRepos: string[];
-  onImported: () => void;
+  onImported: (slug: string) => void;
 }) {
   const [search, setSearch] = React.useState("");
   const [importing, setImporting] = React.useState<string | null>(null);
@@ -115,7 +115,7 @@ function ImportRepoList({
   async function handleImport(repo: GitHubRepo) {
     setImporting(repo.full_name);
     try {
-      await createProject({
+      const project = await createProject({
         name: repo.name,
         description: repo.description ?? undefined,
         repoName: repo.full_name,
@@ -129,7 +129,7 @@ function ImportRepoList({
         title: "Project imported",
         message: `${repo.name} has been imported successfully.`,
       });
-      onImported();
+      onImported(project.slug);
     } catch {
       addNotification({
         type: "error",
@@ -359,7 +359,9 @@ export function ProjectSwitcher() {
     setSearch("");
   }
 
-  function handleImported() {
+  function handleImported(slug: string) {
+    setActiveProjectSlugState(slug);
+    router.push(`/dashboard/${slug}`);
     router.refresh();
     setImportDialogOpen(false);
   }

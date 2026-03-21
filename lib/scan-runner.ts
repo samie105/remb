@@ -23,8 +23,13 @@ import type { ImportContext } from "@/lib/openai";
 import { extractImports, getInternalImports } from "@/lib/import-parser";
 import type { ScanLogEntry, ScanResult } from "@/lib/scan-actions";
 
-/** Maximum files to process in a single scan. Priority-sorted so the most important files come first. */
-const MAX_FILES = 300;
+/** Maximum files to process in a single scan pass. Kept low to avoid OOM on
+ *  Trigger.dev workers — the continuation system chains multiple passes. */
+const MAX_FILES = 100;
+
+/** Maximum number of automatic continuation passes to prevent runaway loops.
+ *  At 100 files/pass this supports repos up to ~1000 files. */
+const MAX_CONTINUATION_PASSES = 10;
 
 /** Retry an async operation up to `maxAttempts` times with exponential back-off. */
 async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 3, delayMs = 1000): Promise<T> {
@@ -347,14 +352,15 @@ export async function runScan(
       return aP - bP;
     });
 
+    let filesRemaining = 0;
     if (queuedFiles.length > MAX_FILES) {
-      const skippedByCapCount = queuedFiles.length - MAX_FILES;
+      filesRemaining = queuedFiles.length - MAX_FILES;
       queuedFiles = queuedFiles.slice(0, MAX_FILES);
       logs.push({
         timestamp: new Date().toISOString(),
         file: "",
         status: "skipped",
-        message: `Capped scan at ${MAX_FILES} files (skipped ${skippedByCapCount} lower-priority files)`,
+        message: `Capped scan at ${MAX_FILES} files (${filesRemaining} remaining — will auto-continue)`,
       });
     }
 
@@ -740,6 +746,9 @@ export async function runScan(
           { timestamp: new Date().toISOString(), file: filePath, status: "error", elapsed_ms: Date.now() - fileStart, message: e instanceof Error ? e.message : "Unknown error" },
           { files_total: filesTotal, files_scanned: filesProcessed, features_created: featuresCreated, entries_created: entriesCreated, errors, duration_ms: Date.now() - scanStartMs },
         );
+      } finally {
+        // Release file content from memory as soon as AI extraction is done
+        contentCache.delete(filePath);
       }
     }
 
@@ -870,6 +879,7 @@ export async function runScan(
       languages,
       commit_sha: commitSha,
       feature_ids: [...featureIdSet],
+      files_remaining: filesRemaining,
     };
 
     await db
@@ -877,7 +887,12 @@ export async function runScan(
       .update({ status: "done", result, finished_at: new Date().toISOString() })
       .eq("id", scanJobId);
 
-    await db.from("projects").update({ status: "active" }).eq("id", projectId);
+    // ── Auto-continuation: if files were capped, dispatch a follow-up scan ──
+    if (filesRemaining > 0) {
+      await scheduleContinuationScan(db, scanJobId, projectId, repoName, branch, githubToken, logs);
+    } else {
+      await db.from("projects").update({ status: "active" }).eq("id", projectId);
+    }
 
     // Trigger queue processing — start next queued scan if any
     triggerQueueProcessing();
@@ -921,6 +936,99 @@ export async function runScan(
     triggerQueueProcessing();
 
     throw err;
+  }
+}
+
+/**
+ * Schedule a continuation scan to pick up files that were skipped due to MAX_FILES cap.
+ * Creates a new scan_jobs row and dispatches it. The continuation scan will
+ * naturally pick up only the remaining files because already-scanned files
+ * match their SHA in the smart-scan dedup check.
+ */
+async function scheduleContinuationScan(
+  db: ReturnType<typeof createAdminClient>,
+  parentJobId: string,
+  projectId: string,
+  repoName: string,
+  branch: string,
+  githubToken: string,
+  parentLogs: ScanLogEntry[],
+): Promise<void> {
+  try {
+    // Count how many continuation passes have already occurred for this chain
+    let passCount = 0;
+    let currentJobId = parentJobId;
+    while (passCount < MAX_CONTINUATION_PASSES) {
+      const { data: job } = await db
+        .from("scan_jobs")
+        .select("result")
+        .eq("id", currentJobId)
+        .single();
+      const meta = job?.result as Record<string, unknown> | null;
+      const prevId = meta?._continuation_of as string | undefined;
+      if (!prevId) break;
+      currentJobId = prevId;
+      passCount++;
+    }
+
+    if (passCount >= MAX_CONTINUATION_PASSES) {
+      parentLogs.push({
+        timestamp: new Date().toISOString(),
+        file: "",
+        status: "skipped",
+        message: `Reached max continuation passes (${MAX_CONTINUATION_PASSES}). Remaining files will be picked up on next manual scan.`,
+      });
+      await db.from("projects").update({ status: "active" }).eq("id", projectId);
+      return;
+    }
+
+    // Create continuation scan job — bypasses user auth since this is server-to-server
+    const { data: job, error } = await db
+      .from("scan_jobs")
+      .insert({
+        project_id: projectId,
+        status: "running" as const,
+        triggered_by: "webhook" as const,
+        started_at: new Date().toISOString(),
+        result: {
+          _continuation_of: parentJobId,
+          _pass_number: passCount + 2, // parent was pass 1 (or passCount+1)
+          logs: [{
+            timestamp: new Date().toISOString(),
+            file: "",
+            status: "scanning",
+            message: `Continuation scan (pass ${passCount + 2}) — picking up remaining files`,
+          }],
+        },
+      })
+      .select()
+      .single();
+
+    if (error || !job) {
+      await db.from("projects").update({ status: "active" }).eq("id", projectId);
+      return;
+    }
+
+    // Dispatch the continuation scan
+    const { dispatchScan } = await import("@/lib/scan-dispatch");
+    await dispatchScan({
+      scanJobId: job.id,
+      projectId,
+      repoName,
+      branch,
+      githubToken,
+    });
+
+    parentLogs.push({
+      timestamp: new Date().toISOString(),
+      file: "",
+      status: "scanning",
+      message: `Continuation scan dispatched (pass ${passCount + 2}) to index remaining files`,
+    });
+  } catch (err) {
+    console.error("[scan-runner] Failed to schedule continuation scan:", err);
+    // Non-fatal: user can manually re-trigger
+    await db.from("projects").update({ status: "active" }).eq("id", projectId);
   }
 }
 

@@ -531,6 +531,45 @@ func (c *Client) LogConversation(req LogConversationRequest) (*LogConversationRe
 	return &resp, nil
 }
 
+// LogSmartConversationRequest is the body for the smart ingestion endpoint.
+type LogSmartConversationRequest struct {
+	Events      []SmartEvent           `json:"events"`
+	ProjectSlug string                 `json:"projectSlug,omitempty"`
+	IDESource   string                 `json:"ideSource,omitempty"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// SmartEvent is a single event in the smart ingestion format.
+type SmartEvent struct {
+	Type      string `json:"type"`
+	Text      string `json:"text,omitempty"`
+	Path      string `json:"path,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Timestamp int64  `json:"timestamp,omitempty"`
+}
+
+// LogSmartConversationResponse is the response from the smart ingestion endpoint.
+type LogSmartConversationResponse struct {
+	Logged       bool   `json:"logged"`
+	ID           string `json:"id"`
+	CreatedAt    string `json:"created_at"`
+	Deduplicated bool   `json:"deduplicated,omitempty"`
+	Summary      string `json:"summary,omitempty"`
+}
+
+// LogSmartConversation sends structured events to the smart ingestion pipeline.
+func (c *Client) LogSmartConversation(req LogSmartConversationRequest) (*LogSmartConversationResponse, error) {
+	data, err := c.request("POST", "/api/cli/conversations/smart", req, nil)
+	if err != nil {
+		return nil, err
+	}
+	var resp LogSmartConversationResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("parse response: %w", err)
+	}
+	return &resp, nil
+}
+
 // SearchConversations performs semantic search across conversation history.
 func (c *Client) SearchConversations(query string, params map[string]string) (*SearchConversationsResponse, error) {
 	if params == nil {

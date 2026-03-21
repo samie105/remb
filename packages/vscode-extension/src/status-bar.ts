@@ -116,6 +116,7 @@ export class StatusBar {
       case "scanning": return "$(sync~spin)";
       case "never-scanned": return "$(cloud-upload)";
       case "no-repo": return "$(plug)";
+      case "unknown": return this.syncState.message.startsWith("Reconnecting") ? "$(sync~spin)" : "";
       default: return "";
     }
   }
@@ -128,6 +129,7 @@ export class StatusBar {
       case "scanning": return "Scan in progress…";
       case "never-scanned": return "Never scanned — trigger a scan to sync";
       case "no-repo": return "No GitHub repo linked";
+      case "unknown": return this.syncState.message;
       default: return "";
     }
   }

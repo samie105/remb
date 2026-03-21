@@ -8,6 +8,7 @@ import {
   searchConversations,
   type RawConversationEvent,
   type ExtractedKnowledge,
+  type IDESource,
 } from "@/lib/conversation-summarizer";
 import { generateEmbedding } from "@/lib/openai";
 
@@ -37,7 +38,8 @@ interface LogSmartConversationInput {
   sessionId: string;
   events: RawConversationEvent[];
   metadata?: Record<string, unknown>;
-  source?: "mcp" | "cli" | "web" | "api";
+  source?: "mcp" | "cli" | "web" | "api" | "import";
+  ideSource?: IDESource;
 }
 
 interface GetHistoryInput {
@@ -241,6 +243,7 @@ export async function logSmartConversation(input: LogSmartConversationInput) {
       tags,
       metadata: metadata as Json,
       source: input.source ?? "mcp",
+      ...(input.ideSource ? { ide_source: input.ideSource } : {}),
       embedding: `[${embedding.join(",")}]`,
       is_summarized: true,
     } as never)

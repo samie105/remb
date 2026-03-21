@@ -40,4 +40,5 @@ func init() {
 	rootCmd.AddCommand(serveCmd)
 	rootCmd.AddCommand(pushCmd)
 	rootCmd.AddCommand(historyCmd)
+	rootCmd.AddCommand(importCmd)
 }

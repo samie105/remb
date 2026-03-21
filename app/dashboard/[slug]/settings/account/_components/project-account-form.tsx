@@ -13,6 +13,16 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { SectionHeading } from "../../../../settings/_components/section-heading";
 import { updateProject, deleteProject } from "@/lib/project-actions";
 import type { ProjectRow } from "@/lib/supabase/types";
@@ -24,6 +34,7 @@ export function ProjectAccountForm({ project }: { project: ProjectRow }) {
   const [websiteUrl, setWebsiteUrl] = useState(project.website_url ?? "");
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function handleSave() {
@@ -49,7 +60,6 @@ export function ProjectAccountForm({ project }: { project: ProjectRow }) {
   }
 
   async function handleDelete() {
-    if (!confirm(`Delete project "${project.name}"? This cannot be undone.`)) return;
     setDeleting(true);
     try {
       const { remainingSlug } = await deleteProject(project.id);
@@ -58,6 +68,7 @@ export function ProjectAccountForm({ project }: { project: ProjectRow }) {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to delete project");
       setDeleting(false);
+      setShowDeleteDialog(false);
     }
   }
 
@@ -134,7 +145,7 @@ export function ProjectAccountForm({ project }: { project: ProjectRow }) {
           <Button
             variant="outline"
             size="sm"
-            onClick={handleDelete}
+            onClick={() => setShowDeleteDialog(true)}
             disabled={deleting}
             className="text-destructive hover:text-destructive gap-2"
           >
@@ -143,6 +154,28 @@ export function ProjectAccountForm({ project }: { project: ProjectRow }) {
           </Button>
         </div>
       </div>
+
+      {/* Delete confirmation */}
+      <AlertDialog open={showDeleteDialog} onOpenChange={(open) => !open && setShowDeleteDialog(false)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {project.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete this project and all its data including features, context entries, memories, and scan history. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDelete}
+              disabled={deleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleting ? "Deleting…" : "Delete Project"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   );
 }

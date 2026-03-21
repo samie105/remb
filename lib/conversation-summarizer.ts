@@ -6,6 +6,18 @@ import { createAdminClient } from "@/lib/supabase/server";
 
 /* ─── types ─── */
 
+export type IDESource =
+  | "cursor"
+  | "claude-code"
+  | "vscode"
+  | "windsurf"
+  | "intellij"
+  | "pycharm"
+  | "android-studio"
+  | "visual-studio"
+  | "zed"
+  | "sublime-text";
+
 export interface RawConversationEvent {
   type: "user_message" | "ai_response" | "tool_call" | "file_save" | "chat_turn" | "editor_focus";
   text?: string;

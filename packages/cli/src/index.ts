@@ -13,6 +13,7 @@ import { contextCommand } from "./commands/context.js";
 import { diffCommand } from "./commands/diff.js";
 import { pushCommand } from "./commands/push.js";
 import { historyCommand } from "./commands/history.js";
+import { importCommand } from "./commands/import.js";
 import { planCommand } from "./commands/plan.js";
 
 declare const __CLI_VERSION__: string;
@@ -56,6 +57,9 @@ program.addCommand(memoryCommand);
 
 // ── Conversation history ────────────────────────────
 program.addCommand(historyCommand);
+
+// ── IDE import ──────────────────────────────────────
+program.addCommand(importCommand);
 
 // ── Projects ────────────────────────────────────────
 program.addCommand(projectsCommand);

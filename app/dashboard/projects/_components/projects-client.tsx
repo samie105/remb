@@ -45,6 +45,16 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { disconnectGitHub, getGitHubRepos } from "@/lib/github-actions";
 import { createProject, deleteProject, type ProjectWithCounts } from "@/lib/project-actions";
 import { addNotification } from "@/components/dashboard/notification-center";
@@ -143,7 +153,7 @@ function ImportRepoList({ existingRepos }: { existingRepos: string[] }) {
   async function handleImport(repo: GitHubRepo) {
     setImporting(repo.full_name);
     try {
-      await createProject({
+      const project = await createProject({
         name: repo.name,
         description: repo.description ?? undefined,
         repoName: repo.full_name,
@@ -155,8 +165,9 @@ function ImportRepoList({ existingRepos }: { existingRepos: string[] }) {
       addNotification({
         type: "success",
         title: "Project imported",
-        message: `${repo.name} has been imported successfully.`,
+        message: `${repo.name} has been imported. Navigating to project…`,
       });
+      router.push(`/dashboard/${project.slug}`);
       router.refresh();
     } catch {
       addNotification({
@@ -287,6 +298,8 @@ interface ProjectsClientProps {
 export function ProjectsClient({ account, initialProjects }: ProjectsClientProps) {
   const router = useRouter();
   const [search, setSearch] = React.useState("");
+  const [deletingId, setDeletingId] = React.useState<string | null>(null);
+  const [confirmDeleteProject, setConfirmDeleteProject] = React.useState<ProjectWithCounts | null>(null);
 
   const filtered = initialProjects.filter(
     (p) =>
@@ -303,15 +316,21 @@ export function ProjectsClient({ account, initialProjects }: ProjectsClientProps
     router.refresh();
   }
 
-  async function handleDelete(id: string) {
+  async function handleDelete() {
+    if (!confirmDeleteProject) return;
+    setDeletingId(confirmDeleteProject.id);
     try {
-      const { remainingSlug } = await deleteProject(id);
+      const { remainingSlug } = await deleteProject(confirmDeleteProject.id);
       try { localStorage.removeItem("remb:active-project"); } catch { /* noop */ }
       addNotification({
         type: "info",
         title: "Project removed",
-        message: "The project has been removed from your workspace.",
+        message: `${confirmDeleteProject.name} has been permanently deleted.`,
       });
+      setConfirmDeleteProject(null);
+      if (remainingSlug) {
+        router.push(`/dashboard/${remainingSlug}`);
+      }
       router.refresh();
     } catch {
       addNotification({
@@ -319,6 +338,8 @@ export function ProjectsClient({ account, initialProjects }: ProjectsClientProps
         title: "Delete failed",
         message: "Failed to remove the project. Please try again.",
       });
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -503,7 +524,7 @@ export function ProjectsClient({ account, initialProjects }: ProjectsClientProps
                           variant="destructive"
                           onClick={(e) => {
                             e.preventDefault();
-                            handleDelete(project.id);
+                            setConfirmDeleteProject(project);
                           }}
                         >
                           Remove project
@@ -590,6 +611,45 @@ export function ProjectsClient({ account, initialProjects }: ProjectsClientProps
           </Dialog>
         </motion.div>
       </motion.div>
+
+      {/* Delete confirmation dialog */}
+      <AlertDialog open={!!confirmDeleteProject} onOpenChange={(open) => !open && setConfirmDeleteProject(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {confirmDeleteProject?.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete this project and all its data including features, context entries, memories, and scan history. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={!!deletingId}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDelete}
+              disabled={!!deletingId}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deletingId ? "Deleting…" : "Delete Project"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Deleting overlay */}
+      <AnimatePresence>
+        {deletingId && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm"
+          >
+            <div className="flex flex-col items-center gap-3">
+              <HugeiconsIcon icon={Loading03Icon} strokeWidth={2} className="size-6 animate-spin text-muted-foreground" />
+              <p className="text-sm text-muted-foreground">Deleting project…</p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }

@@ -5,7 +5,9 @@ export default defineConfig({
   maxDuration: 600,
   dirs: ["trigger"],
   build: {
-    external: ["tar-stream"],
+    // tar-stream must NOT be external — it needs to be bundled into the
+    // deploy image so the scan task can decompress GitHub tarballs.
+    external: [],
   },
   retries: {
     enabledInDev: false,

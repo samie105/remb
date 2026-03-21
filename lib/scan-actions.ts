@@ -36,6 +36,8 @@ export type ScanResult = {
   error?: string;
   /** IDs of all features created or updated during this scan. Used as fallback when context_entries were not created (e.g. embedding failure). */
   feature_ids?: string[];
+  /** Number of files remaining unscanned after this pass (due to MAX_FILES cap). 0 means all files indexed. */
+  files_remaining?: number;
   /* ── Architecture metadata (set by scan-dispatch) ── */
   _trigger_run_id?: string;
   _machine?: string;

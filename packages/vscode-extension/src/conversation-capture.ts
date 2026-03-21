@@ -324,6 +324,15 @@ export class ConversationCapture implements vscode.Disposable {
   /** Callback to trigger instruction file refresh. Set after construction. */
   private syncDynamic: (() => Promise<void>) | undefined;
 
+  /** Retry backoff state for flush failures. */
+  private retryCount = 0;
+  private maxRetries = 5;
+  private retryTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /** Track hashes of recently flushed event batches to prevent re-sending duplicates. */
+  private recentFlushHashes = new Set<string>();
+  private maxFlushHashes = 20;
+
   constructor(
     private api: ApiClient,
     private workspace: WorkspaceDetector,
@@ -522,6 +531,19 @@ export class ConversationCapture implements vscode.Disposable {
     );
   }
 
+  /** Simple hash of event batch for dedup. */
+  private hashEvents(events: CaptureEvent[]): string {
+    // Use timestamps + types as a fingerprint — fast and collision-resistant enough
+    let h = 0;
+    for (const e of events) {
+      const s = `${e.type}:${e.timestamp}:${JSON.stringify(e.data).slice(0, 100)}`;
+      for (let i = 0; i < s.length; i++) {
+        h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+      }
+    }
+    return h.toString(36);
+  }
+
   /** Drain the buffer, send raw events to server for AI summarization + embedding. */
   private async flush(): Promise<void> {
     if (this.buffer.length === 0) return;
@@ -531,6 +553,12 @@ export class ConversationCapture implements vscode.Disposable {
     if (!isAuth || !slug) return;
 
     const events = this.buffer.splice(0);
+
+    // Client-side dedup: skip if this exact batch was already sent recently
+    const batchHash = this.hashEvents(events);
+    if (this.recentFlushHashes.has(batchHash)) {
+      return; // Already sent this exact batch
+    }
 
     // Convert to the structured event format the server expects
     const smartEvents = this.toSmartEvents(events);
@@ -542,6 +570,18 @@ export class ConversationCapture implements vscode.Disposable {
         events: smartEvents,
         projectSlug: slug,
       });
+      // Success — reset retry state and record the hash
+      this.retryCount = 0;
+      if (this.retryTimer) {
+        clearTimeout(this.retryTimer);
+        this.retryTimer = undefined;
+      }
+      this.recentFlushHashes.add(batchHash);
+      // Cap hash set size
+      if (this.recentFlushHashes.size > this.maxFlushHashes) {
+        const first = this.recentFlushHashes.values().next().value;
+        if (first !== undefined) this.recentFlushHashes.delete(first);
+      }
     } catch {
       // Fallback: if smart endpoint fails, try basic logConversation
       const fallbackSummary = this.buildFallbackSummary(events);
@@ -552,11 +592,14 @@ export class ConversationCapture implements vscode.Disposable {
             projectSlug: slug,
             type: "tool_call",
           });
+          this.retryCount = 0;
+          this.recentFlushHashes.add(batchHash);
         } catch {
-          // Both endpoints failed — re-queue events (cap at 500 to avoid unbounded growth)
+          // Both endpoints failed — re-queue events with retry backoff
           if (this.buffer.length < 500) {
             this.buffer.unshift(...events);
           }
+          this.scheduleRetry();
           return; // Skip syncDynamic since the server is unreachable
         }
       }
@@ -564,6 +607,22 @@ export class ConversationCapture implements vscode.Disposable {
 
     // Refresh instruction files so the AI gets latest context
     this.syncDynamic?.().catch(() => {});
+  }
+
+  /** Schedule a retry flush with exponential backoff. */
+  private scheduleRetry(): void {
+    if (this.retryCount >= this.maxRetries) {
+      // Give up on retries, events stay in buffer for next regular flush
+      this.retryCount = 0;
+      return;
+    }
+    this.retryCount++;
+    const delayMs = Math.min(1000 * Math.pow(2, this.retryCount - 1), 60_000); // 1s, 2s, 4s, 8s, 16s, max 60s
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = undefined;
+      this.flush();
+    }, delayMs);
   }
 
   /**
@@ -651,6 +710,7 @@ export class ConversationCapture implements vscode.Disposable {
     // Flush remaining events to server (best-effort async)
     this.flush().catch(() => {});
     if (this.flushTimer) clearInterval(this.flushTimer);
+    if (this.retryTimer) clearTimeout(this.retryTimer);
     this.chatWatcher?.dispose();
     this.disposables.forEach((d) => d.dispose());
   }

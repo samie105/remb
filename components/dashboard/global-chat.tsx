@@ -521,8 +521,8 @@ export function GlobalChat() {
           <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
             {chat.messages.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full gap-2 text-center">
-                <div className="flex size-10 items-center justify-center rounded-xl bg-foreground/5">
-                  <HugeiconsIcon icon={SparklesIcon} className="size-5 text-muted-foreground/50" />
+                <div className="flex size-10 items-center justify-center rounded-full bg-gradient-to-br from-violet-500/20 to-blue-500/20 ring-1 ring-violet-500/10">
+                  <HugeiconsIcon icon={SparklesIcon} className="size-5 text-violet-600 dark:text-violet-400" />
                 </div>
                 <p className="text-xs text-muted-foreground/60">
                   Ask anything about your projects
@@ -531,13 +531,9 @@ export function GlobalChat() {
             ) : (
               chat.messages.map((msg, i) => (
                 <React.Fragment key={msg.id}>
-                  {/* Show tool calls before the assistant message they belong to */}
+                  {/* Show tool activity before the assistant message */}
                   {msg.role === "assistant" && i === chat.messages.length - 1 && toolCalls.length > 0 && (
-                    <div className="space-y-1.5">
-                      {toolCalls.map((tc) => (
-                        <ToolCallCard key={tc.id} toolCall={tc} compact />
-                      ))}
-                    </div>
+                    <ToolActivityIndicator toolCalls={toolCalls} compact />
                   )}
                   <MessageBubble message={msg} />
                 </React.Fragment>
@@ -753,11 +749,11 @@ export function GlobalChat() {
               <div className="mx-auto max-w-2xl px-6 py-6 space-y-4">
             {chat.messages.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-24 gap-4">
-                <div className="flex size-14 items-center justify-center rounded-2xl bg-foreground/5">
-                  <HugeiconsIcon icon={SparklesIcon} className="size-6 text-muted-foreground/40" />
+                <div className="flex size-14 items-center justify-center rounded-full bg-gradient-to-br from-violet-500/20 to-blue-500/20 ring-1 ring-violet-500/10">
+                  <HugeiconsIcon icon={SparklesIcon} className="size-6 text-violet-600 dark:text-violet-400" />
                 </div>
                 <div className="text-center space-y-1">
-                  <p className="text-sm font-medium text-foreground/80">How can I help?</p>
+                  <p className="text-sm font-medium text-foreground/80">Remb AI</p>
                   <p className="text-xs text-muted-foreground/50">
                     Ask about your projects, change settings, navigate — anything.
                   </p>
@@ -767,11 +763,7 @@ export function GlobalChat() {
               chat.messages.map((msg, i) => (
                 <React.Fragment key={msg.id}>
                   {msg.role === "assistant" && i === chat.messages.length - 1 && toolCalls.length > 0 && (
-                    <div className="space-y-2">
-                      {toolCalls.map((tc) => (
-                        <ToolCallCard key={tc.id} toolCall={tc} />
-                      ))}
-                    </div>
+                    <ToolActivityIndicator toolCalls={toolCalls} />
                   )}
                   <MessageBubble message={msg} variant="full" />
                 </React.Fragment>
@@ -1016,6 +1008,74 @@ function ToolCallCard({ toolCall, compact }: { toolCall: ToolCallEvent; compact?
   );
 }
 
+/* ─── Collapsed tool activity indicator ─── */
+
+function ToolActivityIndicator({ toolCalls, compact }: { toolCalls: ToolCallEvent[]; compact?: boolean }) {
+  const allDone = toolCalls.every((tc) => tc.status === "done");
+  const doneCount = toolCalls.filter((tc) => tc.status === "done").length;
+  const currentTool = toolCalls.find((tc) => tc.status === "calling");
+  const currentMeta = currentTool
+    ? (TOOL_META[currentTool.name] ?? { label: currentTool.name, icon: SparklesIcon, color: "zinc" })
+    : null;
+
+  return (
+    <Collapsible>
+      <motion.div
+        initial={{ opacity: 0, y: 4 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.2 }}
+        className={cn(
+          "rounded-xl border border-border/40 bg-muted/30 overflow-hidden",
+          compact ? "ml-0" : "ml-9",
+        )}
+      >
+        <CollapsibleTrigger asChild>
+          <button className={cn(
+            "flex w-full items-center gap-2 text-left transition-colors hover:bg-muted/50",
+            compact ? "px-2.5 py-1.5" : "px-3 py-2",
+          )}>
+            {allDone ? (
+              <HugeiconsIcon icon={CheckmarkCircle02Icon} className={cn("shrink-0 text-emerald-500", compact ? "size-3" : "size-3.5")} />
+            ) : (
+              <HugeiconsIcon icon={Loading03Icon} className={cn("shrink-0 text-muted-foreground animate-spin", compact ? "size-3" : "size-3.5")} />
+            )}
+            <span className={cn("flex-1 text-muted-foreground", compact ? "text-[11px]" : "text-xs")}>
+              {allDone
+                ? `Used ${toolCalls.length} tool${toolCalls.length > 1 ? "s" : ""}`
+                : currentMeta
+                  ? currentMeta.label
+                  : `Working… (${doneCount}/${toolCalls.length})`}
+            </span>
+            <HugeiconsIcon icon={ArrowDown01Icon} className="size-3 text-muted-foreground/50 transition-transform in-data-[state=open]:rotate-180" />
+          </button>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <div className={cn("border-t border-border/30 space-y-1", compact ? "p-1.5" : "p-2")}>
+            {toolCalls.map((tc) => (
+              <ToolCallCard key={tc.id} toolCall={tc} compact />
+            ))}
+          </div>
+        </CollapsibleContent>
+      </motion.div>
+    </Collapsible>
+  );
+}
+
+/* ─── AI Avatar ─── */
+
+function AiAvatar({ size = "sm" }: { size?: "sm" | "md" }) {
+  const dim = size === "sm" ? "size-6" : "size-7";
+  const iconDim = size === "sm" ? "size-3" : "size-3.5";
+  return (
+    <div className={cn(
+      "shrink-0 flex items-center justify-center rounded-full bg-gradient-to-br from-violet-500/20 to-blue-500/20 ring-1 ring-violet-500/10",
+      dim,
+    )}>
+      <HugeiconsIcon icon={SparklesIcon} strokeWidth={2} className={cn(iconDim, "text-violet-600 dark:text-violet-400")} />
+    </div>
+  );
+}
+
 /* ─── Message bubble ─── */
 
 function MessageBubble({
@@ -1044,9 +1104,10 @@ function MessageBubble({
   }
 
   return (
-    <div className="flex justify-start">
+    <div className="flex items-start gap-2.5">
+      <AiAvatar size={isFull ? "md" : "sm"} />
       <div className={cn(
-        "max-w-[90%] leading-relaxed prose-chat",
+        "max-w-[90%] leading-relaxed prose-chat pt-0.5",
         isFull ? "text-sm" : "text-[13px]",
       )}>
         <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>

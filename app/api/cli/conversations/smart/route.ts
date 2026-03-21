@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { authenticateCliRequest } from "@/lib/cli-auth";
 import { createAdminClient } from "@/lib/supabase/server";
 import { logSmartConversation } from "@/lib/conversation-actions";
-import type { RawConversationEvent } from "@/lib/conversation-summarizer";
+import type { RawConversationEvent, IDESource } from "@/lib/conversation-summarizer";
 
 /**
  * POST /api/cli/conversations/smart
@@ -19,10 +19,11 @@ export async function POST(request: Request) {
   const { user } = auth;
   const body = await request.json();
 
-  const { events, projectSlug, metadata } = body as {
+  const { events, projectSlug, metadata, ideSource } = body as {
     events?: RawConversationEvent[];
     projectSlug?: string;
     metadata?: Record<string, unknown>;
+    ideSource?: IDESource;
   };
 
   if (!Array.isArray(events) || events.length === 0) {
@@ -50,7 +51,8 @@ export async function POST(request: Request) {
     sessionId: `smart-${Date.now()}`,
     events: events.slice(0, 100), // Cap at 100 events per request
     metadata: metadata ?? {},
-    source: "cli",
+    source: ideSource ? "import" : "cli",
+    ideSource,
   });
 
   return NextResponse.json({
