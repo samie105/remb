@@ -89,8 +89,8 @@ export const FEATURES: FeatureItem[] = [
   },
   {
     icon: Search,
-    title: "Codebase Scanning",
-    desc: "Connects to GitHub, scans your repo, extracts features, dependencies, and architectural patterns.",
+    title: "Multi-Agent Scanning",
+    desc: "5-phase pipeline: Scout, Analyze, Architect, Review, Finalize. Extracts features, code symbols, architecture layers, and dependency graphs from your entire codebase.",
     span: 2,
   },
   {
@@ -107,16 +107,34 @@ export const FEATURES: FeatureItem[] = [
     badge: "Multi-project",
   },
   {
-    icon: Shield,
-    title: "Secure by Default",
-    desc: "Credentials stored with chmod 600. OAuth PKCE for login. Scoped tokens per project.",
+    icon: GitBranch,
+    title: "Code Graph & Architecture",
+    desc: "Queryable graph of every function, class, and component. Architecture layers auto-detected. Trace call chains, imports, and data flows.",
     span: 3,
   },
   {
     icon: Monitor,
-    title: "Web Dashboard",
-    desc: "Visual project explorer, feature graph visualizer, memory management, MCP hub for connecting AI tools.",
+    title: "AI Chat with Full Context",
+    desc: "Chat with your codebase. The AI assembles relevant memories, code symbols, and conversation history into every response \u2014 15 tools at its disposal.",
     span: 3,
+  },
+  {
+    icon: Cpu,
+    title: "Development Plans",
+    desc: "AI creates phased development plans. Track phases, auto-complete plans when all phases finish. Visible in chat and dashboard.",
+    span: 2,
+  },
+  {
+    icon: Shield,
+    title: "Secure by Default",
+    desc: "Credentials stored with chmod 600. OAuth PKCE for login. Scoped tokens per project.",
+    span: 2,
+  },
+  {
+    icon: Database,
+    title: "Web Dashboard",
+    desc: "Visual project explorer, feature graph, memory manager, conversation history browser, MCP hub for connecting external AI tools.",
+    span: 2,
   },
 ];
 
@@ -124,23 +142,23 @@ export const FEATURES: FeatureItem[] = [
 export const MCP_CAPS: McpCapItem[] = [
   {
     icon: Database,
-    title: "21 MCP Tools",
-    desc: "Load context, search memories, log conversations, trigger scans, manage projects \u2014 all as autonomous tool calls.",
+    title: "42 MCP Tools",
+    desc: "Memory, conversations, plans, code graph, scanning, cross-project search, architecture analysis \u2014 all as autonomous tool calls.",
   },
   {
     icon: Globe,
     title: "Remote SSE Server",
-    desc: "Connect via mcp.useremb.com \u2014 no local binary needed. Add the URL to your MCP config.",
+    desc: "Connect via useremb.com \u2014 no local binary needed. Add the URL to your MCP config and your AI has instant access.",
   },
   {
     icon: Cpu,
     title: "Local stdio Mode",
-    desc: "Run remb serve for an offline MCP server. Works with any client that supports local processes.",
+    desc: "Run remb serve for a local MCP server. Works offline with any client that supports stdio transport.",
   },
   {
     icon: RefreshCw,
     title: "Auto-Session Protocol",
-    desc: "On session start, Remb loads project context and conversation history automatically.",
+    desc: "On session start, Remb automatically loads project context, conversation history, and architecture layers.",
   },
 ];
 

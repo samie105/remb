@@ -4,7 +4,7 @@
       "command": "remb",
       "args": ["serve"]
     },
-     "Remb N": {
+     "Remb": {
       "type": "http",
       "url": "https://www.useremb.com/api/mcp"
     }

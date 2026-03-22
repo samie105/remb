@@ -22,7 +22,7 @@ export interface AssembleOptions {
 
 export interface ScoredItem {
   id: string;
-  kind: "memory" | "context_entry" | "conversation";
+  kind: "memory" | "context_entry" | "conversation" | "code_node";
   tier?: string;
   category?: string;
   title: string;
@@ -105,6 +105,14 @@ export async function assembleContext(opts: AssembleOptions): Promise<AssembleRe
       db, userId, projectId, queryEmbedding, Math.floor(recallLimit * 0.6),
     );
     candidates.push(...contextCandidates);
+  }
+
+  // 1b2. Code nodes — granular function/class/component search
+  if (projectId && queryEmbedding) {
+    const codeNodeCandidates = await fetchCodeNodeCandidates(
+      db, projectId, queryEmbedding, Math.floor(recallLimit * 0.6),
+    );
+    candidates.push(...codeNodeCandidates);
   }
 
   // 1c. Recent conversations
@@ -395,4 +403,90 @@ async function fetchConversationCandidates(
       graph: 0,
     },
   }));
+}
+
+/* ─── code node candidates (granular function/class-level search) ─── */
+
+async function fetchCodeNodeCandidates(
+  db: ReturnType<typeof createAdminClient>,
+  projectId: string,
+  queryEmbedding: number[],
+  limit: number,
+): Promise<ScoredItem[]> {
+  try {
+    // Use the search_code_nodes RPC for semantic search on code_nodes
+    const { data } = await db.rpc("search_code_nodes" as never, {
+      p_project_id: projectId,
+      query_embedding: `[${queryEmbedding.join(",")}]`,
+      match_threshold: 0.3,
+      match_count: limit,
+    } as never);
+
+    const rows = (data ?? []) as unknown as Array<{
+      id: string;
+      name: string;
+      node_type: string;
+      file_path: string;
+      summary: string;
+      layer: string;
+      tags: string[];
+      complexity: string;
+      structure: Record<string, unknown>;
+      similarity: number;
+      created_at: string;
+    }>;
+
+    return rows.map((r) => {
+      // Build a rich content string for display
+      const parts = [
+        `[${r.node_type}] ${r.name}`,
+        `File: ${r.file_path}`,
+        `Layer: ${r.layer ?? "unknown"}`,
+        r.summary,
+      ];
+      if (r.structure?.params) {
+        parts.push(`Params: ${(r.structure.params as string[]).join(", ")}`);
+      }
+      if (r.structure?.return_type) {
+        parts.push(`Returns: ${r.structure.return_type as string}`);
+      }
+      if (r.complexity) {
+        parts.push(`Complexity: ${r.complexity}`);
+      }
+      // Surface architecture patterns if present
+      const patternTags = (r.tags ?? []).filter((t: string) => t.startsWith("pattern:"));
+      if (patternTags.length > 0) {
+        parts.push(`Patterns: ${patternTags.map((t: string) => t.replace("pattern:", "")).join(", ")}`);
+      }
+      // Fan-in from structure metadata — high fan-in = important hub
+      const fanIn = (r.structure?.fan_in as number) ?? 0;
+      if (fanIn > 0) {
+        parts.push(`Imported by: ${fanIn} files`);
+      }
+      const content = parts.join("\n");
+
+      // Boost score for high fan-in nodes (widely imported = architecturally important)
+      const fanInBoost = fanIn >= 10 ? 0.15 : fanIn >= 5 ? 0.08 : fanIn >= 2 ? 0.03 : 0;
+
+      return {
+        id: r.id,
+        kind: "code_node" as const,
+        category: r.node_type,
+        title: `${r.node_type}: ${r.name} (${r.file_path})`,
+        content,
+        tags: r.tags,
+        tokenCount: Math.ceil(content.length / 4),
+        score: fanInBoost, // pre-seed with fan-in boost, composite scoring adds the rest
+        scoring: {
+          semantic: r.similarity,
+          accessFreq: fanIn, // repurpose access freq for fan_in (normalized later)
+          recency: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
+          graph: 0,
+        },
+      };
+    });
+  } catch {
+    // code_nodes table may not exist yet — non-fatal
+    return [];
+  }
 }

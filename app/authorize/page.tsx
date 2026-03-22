@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
-import { validateRedirectUri, validateClientId, getClientInfo } from "@/lib/mcp-oauth-server";
+import { validateRedirectUri, validateClientId, getClientInfo, createAuthorizationCode } from "@/lib/mcp-oauth-server";
 import { AuthorizeClient } from "./_components/authorize-client";
 
 /**
@@ -8,6 +8,8 @@ import { AuthorizeClient } from "./_components/authorize-client";
  *
  * The IDE redirects the user here with PKCE params.
  * If the user isn't logged in, we redirect to GitHub OAuth first.
+ * If already authenticated, auto-approves (no consent screen) since
+ * these are first-party MCP integrations — the user already trusts Remb.
  */
 export default async function AuthorizePage(props: {
   searchParams: Promise<Record<string, string | undefined>>;
@@ -60,24 +62,42 @@ export default async function AuthorizePage(props: {
     );
   }
 
-  // User is authenticated — show approval screen
-  const clientInfo = await getClientInfo(clientId);
+  // User is already authenticated — auto-approve and redirect back to the MCP client.
+  // No consent screen needed since these are first-party integrations (CLI/IDE ↔ Remb).
+  try {
+    const code = await createAuthorizationCode({
+      userId: session.dbUser.id,
+      clientId,
+      redirectUri,
+      codeChallenge,
+      codeChallengeMethod,
+      scope,
+      state,
+    });
 
-  return (
-    <AuthorizeClient
-      user={{
-        login: session.dbUser.github_login,
-        avatar: session.dbUser.github_avatar ?? undefined,
-      }}
-      clientId={clientId}
-      clientName={clientInfo?.client_name ?? undefined}
-      redirectUri={redirectUri}
-      codeChallenge={codeChallenge}
-      codeChallengeMethod={codeChallengeMethod}
-      state={state}
-      scope={scope}
-    />
-  );
+    const url = new URL(redirectUri);
+    url.searchParams.set("code", code);
+    if (state) url.searchParams.set("state", state);
+    redirect(url.toString());
+  } catch {
+    // Fallback to manual approval if auto-approve fails
+    const clientInfo = await getClientInfo(clientId);
+    return (
+      <AuthorizeClient
+        user={{
+          login: session.dbUser.github_login,
+          avatar: session.dbUser.github_avatar ?? undefined,
+        }}
+        clientId={clientId}
+        clientName={clientInfo?.client_name ?? undefined}
+        redirectUri={redirectUri}
+        codeChallenge={codeChallenge}
+        codeChallengeMethod={codeChallengeMethod}
+        state={state}
+        scope={scope}
+      />
+    );
+  }
 }
 
 function ErrorPage({ message }: { message: string }) {

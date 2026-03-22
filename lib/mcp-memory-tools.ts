@@ -20,7 +20,7 @@ const PREFIX = "remb";
  * Bump this whenever builtin tools are added, removed, or changed.
  * This ensures connected MCP clients get a `notifications/tools/list_changed`.
  */
-export const BUILTIN_TOOLS_VERSION = 8;
+export const BUILTIN_TOOLS_VERSION = 10;
 
 /* ─── tool definitions ─── */
 
@@ -760,6 +760,144 @@ export function getBuiltinTools(): AggregatedTool[] {
       },
       _serverId: "__builtin__",
       _originalName: "graph_related",
+    },
+    /* ─── Code Graph (granular function/class-level) ─── */
+    {
+      name: `${PREFIX}__explore_code_graph`,
+      description: "[Remb] Explore the code-level knowledge graph — nodes (files, functions, classes, components, hooks) and edges (calls, imports, data flows). Filter by file path, node type, or architecture layer. Returns symbol-level details with parameters, return types, and complexity.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          project_slug: { type: "string", description: "Project slug" },
+          file_path: { type: "string", description: "Filter to a specific file path" },
+          node_type: { type: "string", enum: ["file", "function", "class", "component", "hook", "type", "interface", "constant", "middleware", "route"], description: "Filter by node type" },
+          layer: { type: "string", enum: ["api", "service", "data", "ui", "middleware", "utility", "test", "config", "core"], description: "Filter by architecture layer" },
+          include_edges: { type: "boolean", description: "Include edges (calls, imports, data flows) for matched nodes (default: true)" },
+          limit: { type: "number", description: "Max nodes to return (default: 20, max: 50)" },
+        },
+        required: ["project_slug"],
+      },
+      _serverId: "__builtin__",
+      _originalName: "explore_code_graph",
+    },
+    {
+      name: `${PREFIX}__search_code_symbols`,
+      description: "[Remb] Semantic search across code symbols — functions, classes, components, hooks, types. Use natural language to find code entities (e.g. 'authentication middleware', 'form validation hook'). Returns matched symbols with summaries, layers, and similarity scores.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Natural language search query" },
+          project_slug: { type: "string", description: "Project slug" },
+          limit: { type: "number", description: "Max results (default: 10, max: 30)" },
+        },
+        required: ["query", "project_slug"],
+      },
+      _serverId: "__builtin__",
+      _originalName: "search_code_symbols",
+    },
+    /* ─── Feature Management ─── */
+    {
+      name: `${PREFIX}__feature_list`,
+      description: "[Remb] List all features for a project. Returns feature names, descriptions, status, and context entry counts.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          project_slug: { type: "string", description: "Project slug" },
+        },
+        required: ["project_slug"],
+      },
+      _serverId: "__builtin__",
+      _originalName: "feature_list",
+    },
+    {
+      name: `${PREFIX}__feature_get`,
+      description: "[Remb] Get detailed knowledge for a specific feature — includes key decisions, gotchas, summary, dependencies, and all context entries.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          project_slug: { type: "string", description: "Project slug" },
+          feature_name: { type: "string", description: "Feature name to look up" },
+        },
+        required: ["project_slug", "feature_name"],
+      },
+      _serverId: "__builtin__",
+      _originalName: "feature_get",
+    },
+    {
+      name: `${PREFIX}__feature_update`,
+      description: "[Remb] Update a feature's name or description.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          feature_id: { type: "string", description: "Feature ID" },
+          name: { type: "string", description: "New feature name" },
+          description: { type: "string", description: "New feature description" },
+        },
+        required: ["feature_id"],
+      },
+      _serverId: "__builtin__",
+      _originalName: "feature_update",
+    },
+    {
+      name: `${PREFIX}__feature_delete`,
+      description: "[Remb] Delete a feature and its associated context entries.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          feature_id: { type: "string", description: "Feature ID to delete" },
+        },
+        required: ["feature_id"],
+      },
+      _serverId: "__builtin__",
+      _originalName: "feature_delete",
+    },
+    /* ─── Project Management ─── */
+    {
+      name: `${PREFIX}__project_create`,
+      description: "[Remb] Create a new project. Optionally link it to a GitHub repo.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Project name" },
+          slug: { type: "string", description: "URL-friendly slug" },
+          description: { type: "string", description: "Project description" },
+          repo_name: { type: "string", description: "GitHub repo (owner/repo format)" },
+          language: { type: "string", description: "Primary programming language" },
+        },
+        required: ["name", "slug"],
+      },
+      _serverId: "__builtin__",
+      _originalName: "project_create",
+    },
+    {
+      name: `${PREFIX}__project_update`,
+      description: "[Remb] Update a project's name, description, or settings.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          project_slug: { type: "string", description: "Current project slug" },
+          name: { type: "string", description: "New project name" },
+          description: { type: "string", description: "New description" },
+          language: { type: "string", description: "Primary language" },
+        },
+        required: ["project_slug"],
+      },
+      _serverId: "__builtin__",
+      _originalName: "project_update",
+    },
+    {
+      name: `${PREFIX}__project_delete`,
+      description: "[Remb] Delete a project and all its data (features, context, memories, etc.). This is permanent.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          project_slug: { type: "string", description: "Project slug to delete" },
+          confirm: { type: "boolean", description: "Must be true to confirm deletion" },
+        },
+        required: ["project_slug", "confirm"],
+      },
+      _serverId: "__builtin__",
+      _originalName: "project_delete",
     },
   ];
 }
@@ -1576,9 +1714,9 @@ export async function callBuiltinTool(
           .eq("project_id", project.id)
           .eq("status", "active"),
         db.from("conversation_entries")
-          .select("content, type, tags, created_at")
+          .select("content, type, tags, metadata, created_at")
           .eq("user_id", userId)
-          .or(`project_slug.eq.${slug},project_slug.is.null`)
+          .eq("project_slug", slug)
           .order("created_at", { ascending: false })
           .limit(10),
       ]);
@@ -1642,8 +1780,18 @@ export async function callBuiltinTool(
         for (const c of conversations) {
           const date = c.created_at.slice(0, 16).replace("T", " ");
           const tagStr = c.tags?.length > 0 ? ` [${c.tags.join(", ")}]` : "";
-          const truncated = c.content.length > 300 ? c.content.slice(0, 300) + "..." : c.content;
-          lines.push(`- **${date}**${tagStr}: ${truncated}`);
+          // Use metadata title if available, otherwise extract first sentence
+          const meta = c.metadata as Record<string, unknown> | null;
+          const metaTitle = typeof meta?.title === "string" ? meta.title : null;
+          const title = metaTitle ?? (() => {
+            const clean = c.content
+              .replace(/```[\s\S]*?```/g, "")
+              .replace(/\n+/g, " ")
+              .trim()
+              .split(/[.!?]\s/)[0];
+            return clean.length > 150 ? clean.slice(0, 150) + "..." : clean + (clean.endsWith(".") ? "" : ".");
+          })();
+          lines.push(`- **${date}**${tagStr}: ${title}`);
         }
         lines.push("");
       }
@@ -2283,6 +2431,135 @@ export async function callBuiltinTool(
       return { content: [{ type: "text", text: JSON.stringify({ feature_id: featureId, knowledge_graph: grouped, total_relations: graph.length }, null, 2) }] };
     }
 
+    case "explore_code_graph": {
+      const projectSlug = args.project_slug as string;
+      if (!projectSlug) throw new Error("project_slug is required");
+
+      const { data: project } = await db
+        .from("projects")
+        .select("id")
+        .eq("user_id", userId)
+        .eq("slug", projectSlug)
+        .single();
+      if (!project) throw new Error(`Project "${projectSlug}" not found`);
+
+      const limit = Math.min((args.limit as number) ?? 20, 50);
+      const includeEdges = args.include_edges !== false;
+
+      let nodeQuery = db
+        .from("code_nodes" as never)
+        .select("id, file_path, node_type, name, summary, layer, tags, complexity, structure" as never)
+        .eq("project_id" as never, project.id as never)
+        .limit(limit);
+
+      if (args.file_path) nodeQuery = nodeQuery.eq("file_path" as never, args.file_path as never);
+      if (args.node_type) nodeQuery = nodeQuery.eq("node_type" as never, args.node_type as never);
+      if (args.layer) nodeQuery = nodeQuery.eq("layer" as never, args.layer as never);
+
+      const { data: nodes } = await nodeQuery;
+      const rows = (nodes ?? []) as unknown as Array<{
+        id: string; file_path: string; node_type: string; name: string;
+        summary: string; layer: string; tags: string[]; complexity: string;
+        structure: Record<string, unknown>;
+      }>;
+
+      let edges: Array<{
+        source_node_name: string; source_file: string;
+        target_node_name: string; target_file: string;
+        edge_type: string; edge_category: string;
+      }> = [];
+
+      if (includeEdges && rows.length > 0) {
+        const filePaths = [...new Set(rows.map((n) => n.file_path))];
+        const { data: edgeData } = await db
+          .from("code_edges" as never)
+          .select("source_node_name, source_file, target_node_name, target_file, edge_type, edge_category" as never)
+          .eq("project_id" as never, project.id as never)
+          .in("source_file" as never, filePaths as never);
+        edges = (edgeData ?? []) as unknown as typeof edges;
+      }
+
+      // Load project layers
+      const { data: layers } = await db
+        .from("project_layers" as never)
+        .select("name, slug, description, file_patterns" as never)
+        .eq("project_id" as never, project.id as never);
+
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            project: projectSlug,
+            nodes: rows.map((n) => ({
+              type: n.node_type, name: n.name, file: n.file_path,
+              layer: n.layer, summary: n.summary,
+              complexity: n.complexity,
+              params: n.structure?.params, return_type: n.structure?.return_type,
+              patterns: (n.tags ?? []).filter((t: string) => t.startsWith("pattern:")).map((t: string) => t.replace("pattern:", "")),
+            })),
+            edges: edges.map((e) => ({
+              from: `${e.source_node_name} (${e.source_file})`,
+              to: `${e.target_node_name} (${e.target_file})`,
+              type: e.edge_type, category: e.edge_category,
+            })),
+            layers: (layers ?? []) as unknown as Array<{ name: string; slug: string; description: string }>,
+            total_nodes: rows.length,
+            total_edges: edges.length,
+          }, null, 2),
+        }],
+      };
+    }
+
+    case "search_code_symbols": {
+      const queryText = args.query as string;
+      const projectSlug = args.project_slug as string;
+      if (!queryText || !projectSlug) throw new Error("query and project_slug are required");
+
+      const { data: project } = await db
+        .from("projects")
+        .select("id")
+        .eq("user_id", userId)
+        .eq("slug", projectSlug)
+        .single();
+      if (!project) throw new Error(`Project "${projectSlug}" not found`);
+
+      const limit = Math.min((args.limit as number) ?? 10, 30);
+
+      const { generateEmbedding } = await import("@/lib/openai");
+      const embedding = await generateEmbedding(queryText);
+
+      const { data } = await db.rpc("search_code_nodes" as never, {
+        p_project_id: project.id,
+        query_embedding: `[${embedding.join(",")}]`,
+        match_threshold: 0.25,
+        match_count: limit,
+      } as never);
+
+      const rows = (data ?? []) as unknown as Array<{
+        id: string; name: string; node_type: string; file_path: string;
+        summary: string; layer: string; tags: string[]; complexity: string;
+        structure: Record<string, unknown>; similarity: number;
+      }>;
+
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            query: queryText,
+            project: projectSlug,
+            results: rows.map((r) => ({
+              type: r.node_type, name: r.name, file: r.file_path,
+              layer: r.layer, similarity: r.similarity,
+              summary: r.summary, complexity: r.complexity,
+              params: r.structure?.params, return_type: r.structure?.return_type,
+              patterns: (r.tags ?? []).filter((t: string) => t.startsWith("pattern:")).map((t: string) => t.replace("pattern:", "")),
+            })),
+            total: rows.length,
+          }, null, 2),
+        }],
+      };
+    }
+
     case "cross_project_patterns": {
       const patternQuery = args.pattern_query as string;
       if (!patternQuery) throw new Error("pattern_query is required");
@@ -2400,6 +2677,226 @@ export async function callBuiltinTool(
           }, null, 2),
         }],
       };
+    }
+
+    /* ─── Feature Management ─── */
+
+    case "feature_list": {
+      const slug = args.project_slug as string;
+      if (!slug) throw new Error("project_slug is required");
+
+      const { data: project } = await db
+        .from("projects")
+        .select("id, name")
+        .eq("user_id", userId)
+        .eq("slug", slug)
+        .single();
+      if (!project) throw new Error(`Project "${slug}" not found`);
+
+      const { data: features } = await db
+        .from("features")
+        .select("id, name, description, status, created_at")
+        .eq("project_id", project.id)
+        .order("name");
+
+      // Count context entries per feature
+      const featureList = [];
+      for (const f of features ?? []) {
+        const { count } = await db
+          .from("context_entries")
+          .select("id", { count: "exact", head: true })
+          .eq("feature_id", f.id);
+        featureList.push({ ...f, context_entries: count ?? 0 });
+      }
+
+      return { content: [{ type: "text", text: JSON.stringify({ project: project.name, features: featureList }, null, 2) }] };
+    }
+
+    case "feature_get": {
+      const slug = args.project_slug as string;
+      const featureName = args.feature_name as string;
+      if (!slug || !featureName) throw new Error("project_slug and feature_name are required");
+
+      const { data: project } = await db
+        .from("projects")
+        .select("id")
+        .eq("user_id", userId)
+        .eq("slug", slug)
+        .single();
+      if (!project) throw new Error(`Project "${slug}" not found`);
+
+      const { data: feature } = await db
+        .from("features")
+        .select("id, name, description, status, created_at")
+        .eq("project_id", project.id)
+        .ilike("name", featureName)
+        .limit(1)
+        .single();
+      if (!feature) throw new Error(`Feature "${featureName}" not found`);
+
+      const { data: entries } = await db
+        .from("context_entries")
+        .select("id, content, metadata, created_at")
+        .eq("feature_id", feature.id)
+        .order("created_at", { ascending: false })
+        .limit(20);
+
+      // Parse context entry content to extract structured knowledge
+      const knowledge = (entries ?? []).map((e) => {
+        try {
+          const parsed = JSON.parse(e.content);
+          return { id: e.id, ...parsed, metadata: e.metadata, created_at: e.created_at };
+        } catch {
+          return { id: e.id, raw_content: e.content.slice(0, 500), metadata: e.metadata, created_at: e.created_at };
+        }
+      });
+
+      return { content: [{ type: "text", text: JSON.stringify({ feature, knowledge }, null, 2) }] };
+    }
+
+    case "feature_update": {
+      const featureId = args.feature_id as string;
+      if (!featureId) throw new Error("feature_id is required");
+
+      const updates: Record<string, unknown> = {};
+      if (args.name) updates.name = args.name;
+      if (args.description) updates.description = args.description;
+
+      if (Object.keys(updates).length === 0) throw new Error("Nothing to update — provide name or description");
+
+      // Verify ownership
+      const { data: feature } = await db
+        .from("features")
+        .select("id, project_id")
+        .eq("id", featureId)
+        .single();
+      if (!feature) throw new Error("Feature not found");
+
+      const { data: project } = await db
+        .from("projects")
+        .select("id")
+        .eq("id", feature.project_id)
+        .eq("user_id", userId)
+        .single();
+      if (!project) throw new Error("Not authorized to update this feature");
+
+      const { error } = await db
+        .from("features")
+        .update(updates)
+        .eq("id", featureId);
+      if (error) throw new Error(error.message);
+
+      return { content: [{ type: "text", text: JSON.stringify({ updated: true, feature_id: featureId, ...updates }) }] };
+    }
+
+    case "feature_delete": {
+      const featureId = args.feature_id as string;
+      if (!featureId) throw new Error("feature_id is required");
+
+      const { data: feature } = await db
+        .from("features")
+        .select("id, project_id, name")
+        .eq("id", featureId)
+        .single();
+      if (!feature) throw new Error("Feature not found");
+
+      const { data: project } = await db
+        .from("projects")
+        .select("id")
+        .eq("id", feature.project_id)
+        .eq("user_id", userId)
+        .single();
+      if (!project) throw new Error("Not authorized to delete this feature");
+
+      // Delete context entries first, then the feature
+      await db.from("context_entries").delete().eq("feature_id", featureId);
+      const { error } = await db.from("features").delete().eq("id", featureId);
+      if (error) throw new Error(error.message);
+
+      return { content: [{ type: "text", text: JSON.stringify({ deleted: true, feature: feature.name }) }] };
+    }
+
+    /* ─── Project Management ─── */
+
+    case "project_create": {
+      const name = args.name as string;
+      const slug = args.slug as string;
+      if (!name || !slug) throw new Error("name and slug are required");
+
+      // Validate slug format
+      if (!/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(slug)) {
+        throw new Error("slug must be lowercase alphanumeric with dashes, e.g. 'my-project'");
+      }
+
+      const { data, error } = await db
+        .from("projects")
+        .insert({
+          user_id: userId,
+          name,
+          slug,
+          description: (args.description as string) || null,
+          repo_name: (args.repo_name as string) || null,
+          language: (args.language as string) || null,
+          status: "active",
+        })
+        .select("id, name, slug")
+        .single();
+      if (error) throw new Error(error.message);
+
+      return { content: [{ type: "text", text: JSON.stringify({ created: true, project: data }) }] };
+    }
+
+    case "project_update": {
+      const slug = args.project_slug as string;
+      if (!slug) throw new Error("project_slug is required");
+
+      const updates: Record<string, unknown> = {};
+      if (args.name) updates.name = args.name;
+      if (args.description) updates.description = args.description;
+      if (args.language) updates.language = args.language;
+
+      if (Object.keys(updates).length === 0) throw new Error("Nothing to update");
+
+      const { data, error } = await db
+        .from("projects")
+        .update(updates)
+        .eq("user_id", userId)
+        .eq("slug", slug)
+        .select("id, name, slug, description, language")
+        .single();
+      if (error) throw new Error(error.message);
+
+      return { content: [{ type: "text", text: JSON.stringify({ updated: true, project: data }) }] };
+    }
+
+    case "project_delete": {
+      const slug = args.project_slug as string;
+      const confirm = args.confirm as boolean;
+      if (!slug) throw new Error("project_slug is required");
+      if (!confirm) throw new Error("Set confirm=true to delete the project permanently");
+
+      const { data: project } = await db
+        .from("projects")
+        .select("id, name")
+        .eq("user_id", userId)
+        .eq("slug", slug)
+        .single();
+      if (!project) throw new Error(`Project "${slug}" not found`);
+
+      // Cascade: delete features + context entries, memories, conversations, plans, deps, etc.
+      const { data: features } = await db.from("features").select("id").eq("project_id", project.id);
+      if (features?.length) {
+        await db.from("context_entries").delete().in("feature_id", features.map((f) => f.id));
+        await db.from("features").delete().eq("project_id", project.id);
+      }
+      await db.from("memories").delete().eq("project_id", project.id);
+      await db.from("conversation_entries").delete().eq("project_id", project.id);
+      await db.from("file_dependencies").delete().eq("project_id", project.id);
+      await db.from("scan_jobs").delete().eq("project_id", project.id);
+      const { error } = await db.from("projects").delete().eq("id", project.id);
+      if (error) throw new Error(error.message);
+
+      return { content: [{ type: "text", text: JSON.stringify({ deleted: true, project: project.name }) }] };
     }
 
     default:

@@ -6,7 +6,16 @@ import * as React from "react";
 
 export type ChatWindowState = "pill" | "mini" | "full";
 
-export type PanelType = "plan" | "architecture" | "mermaid";
+export type ChatModel = "o4-mini" | "gpt-4.1";
+
+export interface ModelUsage {
+  model: ChatModel;
+  used: number;
+  limit: number;
+  remaining: number;
+}
+
+export type PanelType = "plan";
 
 export interface ChatPanel {
   id: string;
@@ -20,6 +29,15 @@ export interface ChatMessage {
   role: "user" | "assistant" | "system";
   content: string;
   createdAt: string;
+}
+
+export interface ConversationSummary {
+  id: string;
+  title: string;
+  preview: string;
+  createdAt: string;
+  source: string;
+  messageCount: number;
 }
 
 export interface DetectedProject {
@@ -45,11 +63,19 @@ interface ChatState {
   windowState: ChatWindowState;
   messages: ChatMessage[];
   isStreaming: boolean;
+  /* model selection + usage */
+  modelMode: ChatModel;
+  modelUsage: ModelUsage[];
   detectedProjects: DetectedProject[];
   activeProjectId: string | null;
   contextFiles: ContextFile[];
   uploadedFiles: UploadedFile[];
   panel: ChatPanel | null;
+  /* conversation history */
+  conversations: ConversationSummary[];
+  activeConversationId: string | null;
+  showConversationList: boolean;
+  conversationsLoaded: boolean;
 }
 
 /* ─── External store (singleton) ─── */
@@ -59,11 +85,17 @@ let state: ChatState = {
   windowState: "pill",
   messages: [],
   isStreaming: false,
+  modelMode: "gpt-4.1",
+  modelUsage: [],
   detectedProjects: [],
   activeProjectId: null,
   contextFiles: [],
   uploadedFiles: [],
   panel: null,
+  conversations: [],
+  activeConversationId: null,
+  showConversationList: false,
+  conversationsLoaded: false,
 };
 
 function emitChange() {
@@ -85,11 +117,17 @@ const serverSnapshot: ChatState = {
   windowState: "pill",
   messages: [],
   isStreaming: false,
+  modelMode: "gpt-4.1",
+  modelUsage: [],
   detectedProjects: [],
   activeProjectId: null,
   contextFiles: [],
   uploadedFiles: [],
   panel: null,
+  conversations: [],
+  activeConversationId: null,
+  showConversationList: false,
+  conversationsLoaded: false,
 };
 
 function getServerSnapshot() {
@@ -145,8 +183,46 @@ export function updateLastAssistantMessage(content: string) {
   emitChange();
 }
 
+export function editMessage(messageId: string, newContent: string) {
+  const idx = state.messages.findIndex((m) => m.id === messageId);
+  if (idx === -1) return;
+  // Replace the message content and truncate everything after it
+  const updated = state.messages.slice(0, idx + 1);
+  updated[idx] = { ...updated[idx], content: newContent };
+  state = { ...state, messages: updated };
+  emitChange();
+}
+
+export function removeMessagesFrom(messageId: string) {
+  const idx = state.messages.findIndex((m) => m.id === messageId);
+  if (idx === -1) return;
+  state = { ...state, messages: state.messages.slice(0, idx) };
+  emitChange();
+}
+
+export function removeConversation(sessionId: string) {
+  state = {
+    ...state,
+    conversations: state.conversations.filter((c) => c.id !== sessionId),
+    ...(state.activeConversationId === sessionId
+      ? { activeConversationId: null, messages: [], panel: null }
+      : {}),
+  };
+  emitChange();
+}
+
 export function setStreaming(isStreaming: boolean) {
   state = { ...state, isStreaming };
+  emitChange();
+}
+
+export function setModelMode(modelMode: ChatModel) {
+  state = { ...state, modelMode };
+  emitChange();
+}
+
+export function setModelUsage(modelUsage: ModelUsage[]) {
+  state = { ...state, modelUsage };
   emitChange();
 }
 
@@ -198,6 +274,39 @@ export function updatePanelData(data: Record<string, unknown>) {
 
 export function closePanel() {
   state = { ...state, panel: null };
+  emitChange();
+}
+
+/* ─── Conversation actions ─── */
+
+export function setConversations(conversations: ConversationSummary[]) {
+  state = { ...state, conversations, conversationsLoaded: true };
+  emitChange();
+}
+
+export function setActiveConversation(id: string | null) {
+  state = { ...state, activeConversationId: id };
+  emitChange();
+}
+
+export function toggleConversationList() {
+  state = { ...state, showConversationList: !state.showConversationList };
+  emitChange();
+}
+
+export function setShowConversationList(show: boolean) {
+  state = { ...state, showConversationList: show };
+  emitChange();
+}
+
+export function newConversation() {
+  state = {
+    ...state,
+    activeConversationId: null,
+    messages: [],
+    panel: null,
+    showConversationList: false,
+  };
   emitChange();
 }
 

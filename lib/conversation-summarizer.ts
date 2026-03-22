@@ -33,6 +33,7 @@ export interface ExtractedKnowledge {
 }
 
 export interface SummarizedConversation {
+  title: string;
   summary: string;
   tags: string[];
   embedding: number[];
@@ -52,15 +53,16 @@ const SUMMARIZE_MODEL = process.env.OPENAI_CONVERSATION_MODEL ?? "gpt-4.1-nano";
 const SUMMARIZE_PROMPT = `You are a concise technical summarizer for an AI coding assistant's memory system.
 
 Given a batch of raw IDE activity events from a coding session, produce:
-1. **summary** — A clear, factual 1-3 sentence summary of what was discussed and accomplished. Focus on OUTCOMES (what was built, fixed, decided), not process (what files were opened). Use present tense. Be specific — mention feature names, file names, technologies.
-2. **tags** — 2-5 lowercase tags for categorization (e.g. "auth", "bug-fix", "refactor", "ui", "database", "api", "performance").
-3. **extracted_knowledge** — Array of actionable learnings from this session. Each entry has:
+1. **title** — A short, descriptive title (5-10 words max) that captures the main activity. Use action verbs. Examples: "Add delete button to conversation list", "Fix mermaid diagram parse errors", "Refactor auth middleware for SSR". NEVER start with "The session involves" or "The session focuses on".
+2. **summary** — A clear, factual 1-3 sentence summary of what was discussed and accomplished. Focus on OUTCOMES (what was built, fixed, decided), not process (what files were opened). Use present tense. Be specific — mention feature names, file names, technologies.
+3. **tags** — 2-5 lowercase tags for categorization (e.g. "auth", "bug-fix", "refactor", "ui", "database", "api", "performance").
+4. **extracted_knowledge** — Array of actionable learnings from this session. Each entry has:
    - "type": one of "decision" (architectural choice), "pattern" (reusable approach), "correction" (mistake to avoid), "gotcha" (surprising behavior), "preference" (user's coding style preference)
    - "content": the actual knowledge, written as a standalone fact (1-2 sentences)
    - "confidence": 0.0-1.0 how confident you are this is a real, reusable insight (not just session noise)
    Only include entries with confidence >= 0.7. If no clear knowledge, return empty array.
-4. **referenced_features** — Feature/module names mentioned (e.g. "Auth Service", "Payment API"). Empty array if none.
-5. **referenced_files** — File paths mentioned (e.g. "lib/auth.ts"). Empty array if none.
+5. **referenced_features** — Feature/module names mentioned (e.g. "Auth Service", "Payment API"). Empty array if none.
+6. **referenced_files** — File paths mentioned (e.g. "lib/auth.ts"). Empty array if none.
 
 Rules:
 - Ignore editor focus / file open events unless they're the only signal
@@ -68,10 +70,10 @@ Rules:
 - If multiple topics were discussed, mention all of them
 - NEVER include raw code snippets in the summary
 - NEVER make up work that wasn't in the events
-- If the events are trivial (just file opens, no real work), return summary as "Browsing session — no significant changes." with tag "browsing" and no extracted knowledge
+- If the events are trivial (just file opens, no real work), return title as "Browsing session", summary as "Browsing session — no significant changes." with tag "browsing" and no extracted knowledge
 - For extracted_knowledge: only extract genuinely reusable insights, not obvious facts
 
-Return ONLY valid JSON: { "summary": "...", "tags": ["..."], "extracted_knowledge": [...], "referenced_features": [...], "referenced_files": [...] }`;
+Return ONLY valid JSON: { "title": "...", "summary": "...", "tags": ["..."], "extracted_knowledge": [...], "referenced_features": [...], "referenced_files": [...] }`;
 
 /* ─── summarize ─── */
 
@@ -114,6 +116,7 @@ export async function summarizeConversation(
   });
 
   const text = response.choices[0]?.message?.content;
+  let title = "Coding session";
   let summary = "Coding session activity.";
   let tags: string[] = [];
   let extractedKnowledge: ExtractedKnowledge[] = [];
@@ -123,12 +126,14 @@ export async function summarizeConversation(
   if (text) {
     try {
       const parsed = JSON.parse(text) as {
+        title?: string;
         summary?: string;
         tags?: string[];
         extracted_knowledge?: Array<{ type?: string; content?: string; confidence?: number }>;
         referenced_features?: string[];
         referenced_files?: string[];
       };
+      title = parsed.title ?? title;
       summary = parsed.summary ?? summary;
       tags = Array.isArray(parsed.tags)
         ? parsed.tags.filter((t): t is string => typeof t === "string").map((t) => t.toLowerCase().trim()).slice(0, 8)
@@ -155,7 +160,7 @@ export async function summarizeConversation(
   // Generate embedding from the summary for search + dedup
   const embedding = await generateEmbedding(summary);
 
-  return { summary, tags, embedding, extractedKnowledge, referencedFeatures, referencedFiles };
+  return { title, summary, tags, embedding, extractedKnowledge, referencedFeatures, referencedFiles };
 }
 
 /**

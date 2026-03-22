@@ -339,32 +339,12 @@ export function ScanDetail({ scanJobId, projectSlug, onBack }: ScanDetailProps) 
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [job?.result]);
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <HugeiconsIcon icon={Loading03Icon} strokeWidth={2} className="size-5 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
-
-  if (!job) {
-    return (
-      <div className="py-10 text-center">
-        <p className="text-[13px] text-muted-foreground">Scan not found.</p>
-        <Button variant="ghost" size="sm" onClick={handleBack} className="mt-2 gap-1.5">
-          <HugeiconsIcon icon={ArrowLeft02Icon} strokeWidth={2} className="size-3.5" />
-          Back
-        </Button>
-      </div>
-    );
-  }
-
-  const result = job.result as (ScanResult & { error?: string }) | null;
+  // ── Derived state (must be above early returns to preserve hook order) ──
+  const result = job?.result as (ScanResult & { error?: string }) | null;
   const logs = result?.logs ?? [];
   const techStack = result?.tech_stack ?? [];
   const languages = result?.languages ?? {};
 
-  // ── Chain-aware state ──
   const isChain = chain.length > 1;
   const chainIsRunning = chain.some((j) => j.status === "running" || j.status === "queued");
   const chainIsFailed = !chainIsRunning && chain.some((j) => j.status === "failed");
@@ -410,6 +390,27 @@ export function ScanDetail({ scanJobId, projectSlug, onBack }: ScanDetailProps) 
       languages: allLangs,
     };
   }, [chain]);
+
+  // ── Early returns (after all hooks) ──
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <HugeiconsIcon icon={Loading03Icon} strokeWidth={2} className="size-5 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (!job) {
+    return (
+      <div className="py-10 text-center">
+        <p className="text-[13px] text-muted-foreground">Scan not found.</p>
+        <Button variant="ghost" size="sm" onClick={handleBack} className="mt-2 gap-1.5">
+          <HugeiconsIcon icon={ArrowLeft02Icon} strokeWidth={2} className="size-3.5" />
+          Back
+        </Button>
+      </div>
+    );
+  }
 
   // Use aggregate for chains, single result for standalone
   const displayResult = isChain ? aggregated : {

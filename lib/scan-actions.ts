@@ -615,36 +615,65 @@ export async function updateScanConfig(
 
       // Auto-register the webhook on GitHub if we have a token and repo
       if (githubToken && project.repo_name && !project.github_webhook_id) {
-        try {
-          const res = await fetch(
-            `https://api.github.com/repos/${project.repo_name}/hooks`,
-            {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${githubToken}`,
-                Accept: "application/vnd.github+json",
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({
-                name: "web",
-                active: true,
-                events: ["push"],
-                config: {
-                  url: `${appUrl}/api/scan/webhook`,
-                  content_type: "json",
-                  secret,
-                  insecure_ssl: "0",
-                },
-              }),
+        const res = await fetch(
+          `https://api.github.com/repos/${project.repo_name}/hooks`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${githubToken}`,
+              Accept: "application/vnd.github+json",
+              "Content-Type": "application/json",
             },
-          );
-          if (res.ok) {
-            const hook = await res.json() as { id: number };
-            updates.github_webhook_id = hook.id;
+            body: JSON.stringify({
+              name: "web",
+              active: true,
+              events: ["push"],
+              config: {
+                url: `${appUrl}/api/scan/webhook`,
+                content_type: "json",
+                secret,
+                insecure_ssl: "0",
+              },
+            }),
+          },
+        );
+        if (res.ok) {
+          const hook = await res.json() as { id: number };
+          updates.github_webhook_id = hook.id;
+        } else {
+          const errBody = await res.text().catch(() => "");
+          const status = res.status;
+          if (status === 404) {
+            throw new Error("Repository not found or you don't have admin access. Check that your GitHub token has the 'admin:repo_hook' scope.");
+          } else if (status === 422) {
+            // GitHub returns 422 if the hook already exists with same URL
+            // Try to find the existing hook and store its ID
+            const listRes = await fetch(
+              `https://api.github.com/repos/${project.repo_name}/hooks`,
+              {
+                headers: {
+                  Authorization: `Bearer ${githubToken}`,
+                  Accept: "application/vnd.github+json",
+                },
+              },
+            );
+            if (listRes.ok) {
+              const hooks = await listRes.json() as Array<{ id: number; config?: { url?: string } }>;
+              const existing = hooks.find((h) => h.config?.url?.includes("/api/scan/webhook"));
+              if (existing) {
+                updates.github_webhook_id = existing.id;
+              } else {
+                throw new Error(`GitHub rejected the webhook (422): ${errBody.slice(0, 200)}`);
+              }
+            }
+          } else {
+            throw new Error(`Failed to register GitHub webhook (${status}): ${errBody.slice(0, 200)}`);
           }
-        } catch {
-          // Non-fatal: the toggle still saves, they can retry
         }
+      } else if (!githubToken) {
+        throw new Error("No GitHub token found. Please reconnect your GitHub account.");
+      } else if (!project.repo_name) {
+        throw new Error("No repository connected to this project.");
       }
     } else {
       // Auto-delete the webhook from GitHub when disabled

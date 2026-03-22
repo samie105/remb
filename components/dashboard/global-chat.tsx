@@ -11,18 +11,11 @@ import {
   ArrowShrink01Icon,
   MinusSignIcon,
   ArrowUp01Icon,
-  CheckmarkCircle02Icon,
-  Search01Icon,
-  PlusSignCircleIcon,
-  Layers01Icon,
   ArrowDown01Icon,
   File01Icon,
-  File02Icon,
   Attachment01Icon,
   FolderLibraryIcon,
-  StructureCheckIcon,
-  FlowIcon,
-  AnalyticsUpIcon,
+  MessageMultiple02Icon,
 } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
 import { useTheme } from "next-themes";
@@ -43,84 +36,31 @@ import {
   removeUploadedFile,
   removeContextFile,
   setPanel,
+  setConversations,
+  setActiveConversation,
+  toggleConversationList,
+  setShowConversationList,
+  newConversation,
+  setMessages,
+  setModelMode,
+  setModelUsage,
+  removeConversation,
+  editMessage,
+  removeMessagesFrom,
   type ChatMessage,
   type DetectedProject,
-  type ContextFile,
-  type UploadedFile,
+  type ConversationSummary,
+  type ModelUsage,
 } from "@/lib/chat-store";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Badge } from "@/components/ui/badge";
-import ReactMarkdown, { type Components } from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { FileContextPicker } from "@/components/dashboard/plan/file-context-picker";
 import { ChatPanelRenderer } from "@/components/dashboard/chat-panel";
-
-/* ─── tool call types ─── */
-
-interface ToolCallEvent {
-  id: string;
-  name: string;
-  args: Record<string, unknown>;
-  result?: string;
-  action?: { type: string; payload?: string };
-  status: "calling" | "done";
-}
-
-/* ─── tool metadata ─── */
-
-const TOOL_META: Record<string, { label: string; icon: typeof SparklesIcon; color: string }> = {
-  get_project_context: { label: "Loading project context", icon: Search01Icon, color: "emerald" },
-  search_projects: { label: "Searching projects", icon: Search01Icon, color: "blue" },
-  search_across_projects: { label: "Searching across projects", icon: Search01Icon, color: "purple" },
-  change_theme: { label: "Changing theme", icon: SparklesIcon, color: "amber" },
-  navigate: { label: "Navigating", icon: ArrowUp01Icon, color: "blue" },
-  create_plan: { label: "Creating plan", icon: PlusSignCircleIcon, color: "blue" },
-  create_phase: { label: "Creating phase", icon: PlusSignCircleIcon, color: "emerald" },
-  list_plans: { label: "Listing plans", icon: Layers01Icon, color: "zinc" },
-  query_knowledge_graph: { label: "Querying knowledge graph", icon: Search01Icon, color: "purple" },
-  search_memories: { label: "Searching memories", icon: Search01Icon, color: "emerald" },
-  get_impact_analysis: { label: "Analyzing impact", icon: AnalyticsUpIcon, color: "amber" },
-  get_thread_history: { label: "Loading thread history", icon: Search01Icon, color: "zinc" },
-  show_plan_tree: { label: "Showing plan", icon: Layers01Icon, color: "blue" },
-  show_architecture: { label: "Generating architecture", icon: StructureCheckIcon, color: "purple" },
-  show_diagram: { label: "Rendering diagram", icon: FlowIcon, color: "emerald" },
-  trigger_scan: { label: "Triggering scan", icon: AnalyticsUpIcon, color: "amber" },
-};
-
-const COLOR_MAP: Record<string, { border: string; bg: string; text: string; icon: string }> = {
-  emerald: {
-    border: "border-emerald-500/25 dark:border-emerald-500/20",
-    bg: "bg-emerald-500/[0.06] dark:bg-emerald-500/[0.04]",
-    text: "text-emerald-700 dark:text-emerald-400",
-    icon: "text-emerald-600 dark:text-emerald-400",
-  },
-  blue: {
-    border: "border-blue-500/25 dark:border-blue-500/20",
-    bg: "bg-blue-500/[0.06] dark:bg-blue-500/[0.04]",
-    text: "text-blue-700 dark:text-blue-400",
-    icon: "text-blue-600 dark:text-blue-400",
-  },
-  amber: {
-    border: "border-amber-500/25 dark:border-amber-500/20",
-    bg: "bg-amber-500/[0.06] dark:bg-amber-500/[0.04]",
-    text: "text-amber-700 dark:text-amber-400",
-    icon: "text-amber-600 dark:text-amber-400",
-  },
-  purple: {
-    border: "border-purple-500/25 dark:border-purple-500/20",
-    bg: "bg-purple-500/[0.06] dark:bg-purple-500/[0.04]",
-    text: "text-purple-700 dark:text-purple-400",
-    icon: "text-purple-600 dark:text-purple-400",
-  },
-  zinc: {
-    border: "border-border",
-    bg: "bg-muted/50",
-    text: "text-muted-foreground",
-    icon: "text-muted-foreground",
-  },
-};
+import { ToolIndicator, type ToolCallEvent } from "@/components/dashboard/chat/tool-indicator";
+import { ModelSelector } from "@/components/dashboard/chat/model-selector";
+import { MessageBubble } from "@/components/dashboard/chat/message-bubble";
+import { ConversationList, ConversationListHeader } from "@/components/dashboard/chat/conversation-list";
+import { EmptyState } from "@/components/dashboard/chat/empty-state";
 
 /* ─── native action handlers ─── */
 
@@ -171,6 +111,30 @@ async function detectProjects(message: string): Promise<DetectedProject[]> {
   }
 }
 
+/* ─── conversation history loader ─── */
+
+async function loadConversations(): Promise<ConversationSummary[]> {
+  try {
+    const res = await fetch("/api/chat/conversations");
+    if (!res.ok) return [];
+    const data = (await res.json()) as { conversations: ConversationSummary[] };
+    return data.conversations;
+  } catch {
+    return [];
+  }
+}
+
+async function loadConversationMessages(conversationId: string): Promise<ChatMessage[]> {
+  try {
+    const res = await fetch(`/api/chat/conversations/${encodeURIComponent(conversationId)}`);
+    if (!res.ok) return [];
+    const data = (await res.json()) as { messages: ChatMessage[] };
+    return data.messages;
+  } catch {
+    return [];
+  }
+}
+
 /* ─── file upload config ─── */
 
 const ALLOWED_EXTENSIONS = new Set([
@@ -196,89 +160,6 @@ function isReadableFile(fileName: string): boolean {
   return false;
 }
 
-/* ─── file path detection ─── */
-
-const FILE_PATH_RE = /(?:^|\s|`)((?:[\w@.-]+\/)+[\w.-]+\.\w{1,10})(?:`|\s|$|[,;:)])/g;
-
-function getFileLabel(filePath: string): { name: string; type: string; description: string } {
-  const parts = filePath.split("/");
-  const fileName = parts[parts.length - 1];
-  const ext = fileName.split(".").pop() ?? "";
-
-  if (fileName === "route.ts" || fileName === "route.tsx") {
-    const method = parts.includes("api") ? "API" : "Page";
-    const routePath = parts.slice(parts.indexOf("api") >= 0 ? parts.indexOf("api") : 0, -1).join("/");
-    return { name: routePath || fileName, type: `${method} Route`, description: `${method} endpoint at ${filePath}` };
-  }
-  if (fileName === "page.tsx" || fileName === "page.ts") {
-    const pagePath = parts.slice(parts.indexOf("app") >= 0 ? parts.indexOf("app") + 1 : 0, -1).join("/");
-    return { name: pagePath || "root", type: "Page", description: `Next.js page at /${pagePath}` };
-  }
-  if (parts.includes("components")) {
-    return { name: fileName.replace(/\.\w+$/, ""), type: "Component", description: `React component at ${filePath}` };
-  }
-  if (fileName.startsWith("use") || parts.includes("hooks")) {
-    return { name: fileName.replace(/\.\w+$/, ""), type: "Hook", description: `React hook at ${filePath}` };
-  }
-  if (parts.includes("lib") || parts.includes("utils")) {
-    return { name: fileName.replace(/\.\w+$/, ""), type: "Library", description: `Utility module at ${filePath}` };
-  }
-
-  const typeMap: Record<string, string> = {
-    ts: "TypeScript", tsx: "Component", js: "JavaScript", jsx: "Component",
-    css: "Stylesheet", json: "Config", md: "Document", sql: "Migration",
-  };
-  return { name: fileName.replace(/\.\w+$/, ""), type: typeMap[ext] ?? "File", description: filePath };
-}
-
-function FilePathLink({ filePath }: { filePath: string }) {
-  const info = getFileLabel(filePath);
-
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/60 px-1.5 py-0.5 text-[12px] font-medium text-foreground cursor-default hover:bg-accent transition-colors">
-          <HugeiconsIcon icon={File02Icon} className="size-3 text-muted-foreground shrink-0" />
-          <span className="truncate max-w-[180px]">{info.name}</span>
-        </span>
-      </TooltipTrigger>
-      <TooltipContent side="top" className="p-0 bg-popover text-popover-foreground border border-border shadow-xl rounded-xl overflow-hidden max-w-xs">
-        <div className="px-3 py-2.5 space-y-1.5">
-          <div className="flex items-center gap-2">
-            <Badge variant="secondary" className="text-[10px]">{info.type}</Badge>
-            <span className="text-[11px] font-semibold text-foreground truncate">{info.name}</span>
-          </div>
-          <p className="text-[11px] text-muted-foreground leading-relaxed">{info.description}</p>
-          <code className="block text-[10px] text-muted-foreground/70 font-mono truncate">{filePath}</code>
-        </div>
-      </TooltipContent>
-    </Tooltip>
-  );
-}
-
-/* ─── markdown components ─── */
-
-const markdownComponents: Components = {
-  code({ className, children, ...props }) {
-    const isInline = !className;
-    const text = String(children).replace(/\n$/, "");
-
-    if (isInline && FILE_PATH_RE.test(text)) {
-      FILE_PATH_RE.lastIndex = 0;
-      return <FilePathLink filePath={text} />;
-    }
-
-    if (!isInline) {
-      return (
-        <code className={className} {...props}>
-          {children}
-        </code>
-      );
-    }
-    return <code {...props}>{children}</code>;
-  },
-};
-
 /* ─── main component ─── */
 
 export function GlobalChat() {
@@ -295,6 +176,19 @@ export function GlobalChat() {
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = React.useState(true);
+
+  // Load conversations + usage on first open
+  React.useEffect(() => {
+    if (chat.windowState !== "pill" && !chat.conversationsLoaded) {
+      loadConversations().then(setConversations);
+    }
+    if (chat.windowState !== "pill" && chat.modelUsage.length === 0) {
+      fetch("/api/chat/usage")
+        .then((r) => r.json())
+        .then((d: { usage: ModelUsage[] }) => setModelUsage(d.usage))
+        .catch(() => {});
+    }
+  }, [chat.windowState, chat.conversationsLoaded, chat.modelUsage.length]);
 
   // Derive active project ID from path for file picker
   const pathProjectId = React.useMemo(() => {
@@ -372,13 +266,44 @@ export function GlobalChat() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }
 
-  async function handleSend() {
-    const text = input.trim();
-    if (!text || chat.isStreaming) return;
+  async function handleLoadConversation(convo: ConversationSummary) {
+    setActiveConversation(convo.id);
+    setShowConversationList(false);
+    const msgs = await loadConversationMessages(convo.id);
+    setMessages(msgs);
+  }
 
-    setInput("");
+  async function handleDeleteConversation(convo: ConversationSummary) {
+    try {
+      await fetch(`/api/chat/conversations/${convo.id}`, { method: "DELETE" });
+      removeConversation(convo.id);
+    } catch {
+      /* silently fail */
+    }
+  }
+
+  function handleEditMessage(messageId: string, newContent: string) {
+    editMessage(messageId, newContent);
+    // Re-send with the edited content
+    const text = newContent.trim();
+    if (!text) return;
+    // Remove the assistant reply that followed it (already truncated by editMessage)
+    sendMessage(text);
+  }
+
+  function handleRetryLastMessage() {
+    // Find the last user message
+    const lastUserMsg = [...chat.messages].reverse().find((m) => m.role === "user");
+    if (!lastUserMsg) return;
+    // Remove everything from the last assistant message onwards
+    const lastAssistant = [...chat.messages].reverse().find((m) => m.role === "assistant");
+    if (lastAssistant) removeMessagesFrom(lastAssistant.id);
+    sendMessage(lastUserMsg.content);
+  }
+
+  async function sendMessage(text: string) {
+    if (!text.trim() || chat.isStreaming) return;
     setToolCalls([]);
-    if (textareaRef.current) textareaRef.current.style.height = "36px";
     setIsAtBottom(true);
 
     const userMsg: ChatMessage = {
@@ -419,6 +344,8 @@ export function GlobalChat() {
           history,
           projectId: chat.activeProjectId,
           currentPath: pathname,
+          conversationId: chat.activeConversationId,
+          modelMode: chat.modelMode,
           contextFiles: chat.contextFiles.length > 0 ? chat.contextFiles : undefined,
           uploadedFiles: chat.uploadedFiles.length > 0
             ? chat.uploadedFiles.map((f) => ({ name: f.name, content: f.content }))
@@ -426,6 +353,12 @@ export function GlobalChat() {
         }),
       });
 
+      if (res.status === 429) {
+        const errorData = (await res.json()) as { error: string; message: string; usage?: ModelUsage[] };
+        updateLastAssistantMessage(errorData.message);
+        if (errorData.usage) setModelUsage(errorData.usage);
+        return;
+      }
       if (!res.ok) throw new Error(await res.text());
 
       const reader = res.body?.getReader();
@@ -462,7 +395,6 @@ export function GlobalChat() {
                     {
                       id: `tc-${Date.now()}-${Math.random()}`,
                       name: data.name as string,
-                      args: data.args as Record<string, unknown>,
                       status: "calling",
                     },
                   ]);
@@ -472,7 +404,7 @@ export function GlobalChat() {
                   setToolCalls((prev) =>
                     prev.map((tc) =>
                       tc.name === resultData.name && tc.status === "calling"
-                        ? { ...tc, result: resultData.result, action: resultData.action, status: "done" as const }
+                        ? { ...tc, status: "done" as const }
                         : tc,
                     ),
                   );
@@ -487,9 +419,17 @@ export function GlobalChat() {
                   updateLastAssistantMessage(`Error: ${data.message}`);
                   break;
                 case "panel":
-                  setPanel(data as { id: string; type: "plan" | "architecture" | "mermaid"; title: string; data: Record<string, unknown> });
+                  setPanel(data as { id: string; type: "plan"; title: string; data: Record<string, unknown> });
                   // Auto-expand to full if showing a panel in mini mode
                   if (chat.windowState === "mini") expandChat();
+                  break;
+                case "conversation_id":
+                  setActiveConversation(data.id as string);
+                  break;
+                case "usage":
+                  if (Array.isArray(data.usage)) {
+                    setModelUsage(data.usage as ModelUsage[]);
+                  }
                   break;
               }
             } catch {
@@ -507,12 +447,23 @@ export function GlobalChat() {
         const cleaned = stripActionTags(fullContent);
         updateLastAssistantMessage(cleaned);
       }
+
+      // Refresh conversation list in background
+      loadConversations().then(setConversations);
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : "Something went wrong";
       updateLastAssistantMessage(`Sorry, I ran into an error: ${errMsg}`);
     } finally {
       setStreaming(false);
     }
+  }
+
+  async function handleSend() {
+    const text = input.trim();
+    if (!text || chat.isStreaming) return;
+    setInput("");
+    if (textareaRef.current) textareaRef.current.style.height = "36px";
+    await sendMessage(text);
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
@@ -562,13 +513,25 @@ export function GlobalChat() {
                 <HugeiconsIcon icon={SparklesIcon} className="size-3.5 text-foreground" />
               </div>
               <span className="text-sm font-semibold text-foreground">Remb AI</span>
-              {chat.activeProjectId && chat.detectedProjects.length > 0 && (
-                <span className="text-[11px] text-muted-foreground">
-                  · {chat.detectedProjects.find((p) => p.id === chat.activeProjectId)?.name}
-                </span>
-              )}
+              <ModelSelector
+                modelMode={chat.modelMode}
+                usage={chat.modelUsage}
+                onModelChange={setModelMode}
+                compact
+              />
             </div>
             <div className="flex items-center gap-0.5">
+              <button
+                onClick={toggleConversationList}
+                className={cn(
+                  "rounded-lg p-1.5 transition-colors",
+                  chat.showConversationList
+                    ? "bg-accent text-foreground"
+                    : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                )}
+              >
+                <HugeiconsIcon icon={MessageMultiple02Icon} className="size-3.5" />
+              </button>
               <button
                 onClick={expandChat}
                 className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
@@ -586,25 +549,45 @@ export function GlobalChat() {
 
           <div className="mx-4 h-px bg-border/40" />
 
+          {/* Conversation list overlay (mini) */}
+          <AnimatePresence>
+            {chat.showConversationList && (
+              <motion.div
+                initial={{ opacity: 0, y: -4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -4 }}
+                className="absolute inset-x-0 top-12 bottom-0 z-20 bg-background/98 backdrop-blur-sm overflow-hidden flex flex-col"
+              >
+                <ConversationListHeader onNew={newConversation} compact />
+                <ConversationList
+                  conversations={chat.conversations}
+                  activeId={chat.activeConversationId}
+                  onSelect={handleLoadConversation}
+                  onDelete={handleDeleteConversation}
+                  onNew={newConversation}
+                  compact
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           {/* Messages */}
           <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
             {chat.messages.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-full gap-2 text-center">
-                <div className="flex size-10 items-center justify-center rounded-full bg-gradient-to-br from-violet-500/20 to-blue-500/20 ring-1 ring-violet-500/10">
-                  <HugeiconsIcon icon={SparklesIcon} className="size-5 text-violet-600 dark:text-violet-400" />
-                </div>
-                <p className="text-xs text-muted-foreground/60">
-                  Ask anything about your projects
-                </p>
-              </div>
+              <EmptyState variant="mini" />
             ) : (
               chat.messages.map((msg, i) => (
                 <React.Fragment key={msg.id}>
-                  {/* Show tool activity before the assistant message */}
                   {msg.role === "assistant" && i === chat.messages.length - 1 && toolCalls.length > 0 && (
-                    <ToolActivityIndicator toolCalls={toolCalls} compact />
+                    <ToolIndicator toolCalls={toolCalls} compact />
                   )}
-                  <MessageBubble message={msg} />
+                  <MessageBubble
+                    message={msg}
+                    isLastAssistant={msg.role === "assistant" && i === chat.messages.length - 1}
+                    isStreaming={chat.isStreaming}
+                    onEdit={handleEditMessage}
+                    onRetry={handleRetryLastMessage}
+                  />
                 </React.Fragment>
               ))
             )}
@@ -776,11 +759,49 @@ export function GlobalChat() {
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.98 }}
         transition={{ duration: 0.2 }}
-        className="fixed inset-0 z-50 flex flex-col bg-background"
+        className="fixed inset-0 z-50 flex bg-background"
       >
+        {/* Conversation sidebar */}
+        <AnimatePresence>
+          {chat.showConversationList && (
+            <motion.div
+              initial={{ width: 0, opacity: 0 }}
+              animate={{ width: 280, opacity: 1 }}
+              exit={{ width: 0, opacity: 0 }}
+              transition={{ type: "spring", stiffness: 400, damping: 35 }}
+              className="shrink-0 border-r border-border/40 bg-muted/20 overflow-hidden flex flex-col"
+            >
+              <div className="flex items-center justify-between px-4 py-3 border-b border-border/30">
+                <span className="text-xs font-semibold text-foreground">Conversations</span>
+                <ConversationListHeader onNew={newConversation} />
+              </div>
+              <ConversationList
+                conversations={chat.conversations}
+                activeId={chat.activeConversationId}
+                onSelect={handleLoadConversation}
+                onDelete={handleDeleteConversation}
+                onNew={newConversation}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Main chat area */}
+        <div className="flex flex-1 flex-col overflow-hidden">
         {/* Top bar */}
         <div className="flex items-center justify-between border-b border-border/40 px-6 py-3 shrink-0">
           <div className="flex items-center gap-3">
+            <button
+              onClick={toggleConversationList}
+              className={cn(
+                "rounded-xl p-2 transition-colors",
+                chat.showConversationList
+                  ? "bg-accent text-foreground"
+                  : "text-muted-foreground hover:bg-accent hover:text-foreground",
+              )}
+            >
+              <HugeiconsIcon icon={MessageMultiple02Icon} className="size-4" />
+            </button>
             <div className="flex size-8 items-center justify-center rounded-xl bg-foreground/5">
               <HugeiconsIcon icon={SparklesIcon} className="size-4 text-foreground" />
             </div>
@@ -792,6 +813,11 @@ export function GlobalChat() {
                 </p>
               )}
             </div>
+            <ModelSelector
+              modelMode={chat.modelMode}
+              usage={chat.modelUsage}
+              onModelChange={setModelMode}
+            />
           </div>
           <div className="flex items-center gap-1">
             <button
@@ -817,24 +843,21 @@ export function GlobalChat() {
             <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
               <div className="mx-auto max-w-2xl px-6 py-6 space-y-4">
             {chat.messages.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-24 gap-4">
-                <div className="flex size-14 items-center justify-center rounded-full bg-gradient-to-br from-violet-500/20 to-blue-500/20 ring-1 ring-violet-500/10">
-                  <HugeiconsIcon icon={SparklesIcon} className="size-6 text-violet-600 dark:text-violet-400" />
-                </div>
-                <div className="text-center space-y-1">
-                  <p className="text-sm font-medium text-foreground/80">Remb AI</p>
-                  <p className="text-xs text-muted-foreground/50">
-                    Ask about your projects, change settings, navigate — anything.
-                  </p>
-                </div>
-              </div>
+              <EmptyState variant="full" />
             ) : (
               chat.messages.map((msg, i) => (
                 <React.Fragment key={msg.id}>
                   {msg.role === "assistant" && i === chat.messages.length - 1 && toolCalls.length > 0 && (
-                    <ToolActivityIndicator toolCalls={toolCalls} />
+                    <ToolIndicator toolCalls={toolCalls} />
                   )}
-                  <MessageBubble message={msg} variant="full" />
+                  <MessageBubble
+                    message={msg}
+                    variant="full"
+                    isLastAssistant={msg.role === "assistant" && i === chat.messages.length - 1}
+                    isStreaming={chat.isStreaming}
+                    onEdit={handleEditMessage}
+                    onRetry={handleRetryLastMessage}
+                  />
                 </React.Fragment>
               ))
             )}
@@ -986,6 +1009,7 @@ export function GlobalChat() {
           {/* Side panel */}
           <ChatPanelRenderer />
         </div>
+        </div>
 
         {/* Hidden file input */}
         <input
@@ -1027,162 +1051,4 @@ function ThinkingDots() {
   );
 }
 
-/* ─── Tool call card ─── */
 
-function ToolCallCard({ toolCall, compact }: { toolCall: ToolCallEvent; compact?: boolean }) {
-  const meta = TOOL_META[toolCall.name] ?? { label: toolCall.name, icon: SparklesIcon, color: "zinc" };
-  const isDone = toolCall.status === "done";
-  const colors = COLOR_MAP[meta.color] ?? COLOR_MAP.zinc;
-
-  return (
-    <Collapsible>
-      <motion.div
-        initial={{ opacity: 0, y: 4, scale: 0.98 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        transition={{ duration: 0.25 }}
-        className={cn("rounded-xl border overflow-hidden", colors.border, colors.bg)}
-      >
-        <CollapsibleTrigger asChild>
-          <button className={cn(
-            "flex w-full items-center gap-2 text-left transition-colors hover:bg-black/2 dark:hover:bg-white/2",
-            compact ? "px-2.5 py-1.5" : "px-3 py-2.5",
-          )}>
-            <div className={cn("shrink-0", isDone ? colors.icon : "text-muted-foreground")}>
-              {isDone ? (
-                <HugeiconsIcon icon={CheckmarkCircle02Icon} className={compact ? "size-3" : "size-4"} />
-              ) : (
-                <HugeiconsIcon icon={Loading03Icon} className={cn(compact ? "size-3" : "size-4", "animate-spin")} />
-              )}
-            </div>
-            <span className={cn("flex-1 font-medium", isDone ? colors.text : "text-muted-foreground", compact ? "text-[11px]" : "text-xs")}>
-              {meta.label}
-            </span>
-            {isDone && toolCall.result && (
-              <HugeiconsIcon icon={ArrowDown01Icon} className="size-3 text-muted-foreground transition-transform in-data-[state=open]:rotate-180" />
-            )}
-          </button>
-        </CollapsibleTrigger>
-
-        {isDone && toolCall.result && (
-          <CollapsibleContent>
-            <div className="border-t border-border/60 px-3 py-2">
-              <pre className={cn("text-muted-foreground leading-relaxed whitespace-pre-wrap font-mono max-h-32 overflow-y-auto", compact ? "text-[10px]" : "text-[11px]")}>
-                {toolCall.result.slice(0, 500)}
-              </pre>
-            </div>
-          </CollapsibleContent>
-        )}
-      </motion.div>
-    </Collapsible>
-  );
-}
-
-/* ─── Collapsed tool activity indicator ─── */
-
-function ToolActivityIndicator({ toolCalls, compact }: { toolCalls: ToolCallEvent[]; compact?: boolean }) {
-  const allDone = toolCalls.every((tc) => tc.status === "done");
-  const doneCount = toolCalls.filter((tc) => tc.status === "done").length;
-  const currentTool = toolCalls.find((tc) => tc.status === "calling");
-  const currentMeta = currentTool
-    ? (TOOL_META[currentTool.name] ?? { label: currentTool.name, icon: SparklesIcon, color: "zinc" })
-    : null;
-
-  return (
-    <Collapsible>
-      <motion.div
-        initial={{ opacity: 0, y: 4 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.2 }}
-        className={cn(
-          "rounded-xl border border-border/40 bg-muted/30 overflow-hidden",
-          compact ? "ml-0" : "ml-9",
-        )}
-      >
-        <CollapsibleTrigger asChild>
-          <button className={cn(
-            "flex w-full items-center gap-2 text-left transition-colors hover:bg-muted/50",
-            compact ? "px-2.5 py-1.5" : "px-3 py-2",
-          )}>
-            {allDone ? (
-              <HugeiconsIcon icon={CheckmarkCircle02Icon} className={cn("shrink-0 text-emerald-500", compact ? "size-3" : "size-3.5")} />
-            ) : (
-              <HugeiconsIcon icon={Loading03Icon} className={cn("shrink-0 text-muted-foreground animate-spin", compact ? "size-3" : "size-3.5")} />
-            )}
-            <span className={cn("flex-1 text-muted-foreground", compact ? "text-[11px]" : "text-xs")}>
-              {allDone
-                ? `Used ${toolCalls.length} tool${toolCalls.length > 1 ? "s" : ""}`
-                : currentMeta
-                  ? currentMeta.label
-                  : `Working… (${doneCount}/${toolCalls.length})`}
-            </span>
-            <HugeiconsIcon icon={ArrowDown01Icon} className="size-3 text-muted-foreground/50 transition-transform in-data-[state=open]:rotate-180" />
-          </button>
-        </CollapsibleTrigger>
-        <CollapsibleContent>
-          <div className={cn("border-t border-border/30 space-y-1", compact ? "p-1.5" : "p-2")}>
-            {toolCalls.map((tc) => (
-              <ToolCallCard key={tc.id} toolCall={tc} compact />
-            ))}
-          </div>
-        </CollapsibleContent>
-      </motion.div>
-    </Collapsible>
-  );
-}
-
-/* ─── AI Avatar ─── */
-
-function AiAvatar({ size = "sm" }: { size?: "sm" | "md" }) {
-  const dim = size === "sm" ? "size-6" : "size-7";
-  const iconDim = size === "sm" ? "size-3" : "size-3.5";
-  return (
-    <div className={cn(
-      "shrink-0 flex items-center justify-center rounded-full bg-gradient-to-br from-violet-500/20 to-blue-500/20 ring-1 ring-violet-500/10",
-      dim,
-    )}>
-      <HugeiconsIcon icon={SparklesIcon} strokeWidth={2} className={cn(iconDim, "text-violet-600 dark:text-violet-400")} />
-    </div>
-  );
-}
-
-/* ─── Message bubble ─── */
-
-function MessageBubble({
-  message,
-  variant = "mini",
-}: {
-  message: ChatMessage;
-  variant?: "mini" | "full";
-}) {
-  const isUser = message.role === "user";
-  if (!message.content && !isUser) return null;
-
-  const isFull = variant === "full";
-
-  if (isUser) {
-    return (
-      <div className="flex justify-end">
-        <div className={cn(
-          "max-w-[85%] rounded-2xl px-4 py-2.5 leading-relaxed bg-foreground text-background",
-          isFull ? "text-sm rounded-br-md" : "text-[13px]",
-        )}>
-          {message.content}
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex items-start gap-2.5">
-      <AiAvatar size={isFull ? "md" : "sm"} />
-      <div className={cn(
-        "max-w-[90%] leading-relaxed prose-chat pt-0.5",
-        isFull ? "text-sm" : "text-[13px]",
-      )}>
-        <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-          {message.content}
-        </ReactMarkdown>
-      </div>
-    </div>
-  );
-}

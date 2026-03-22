@@ -232,6 +232,27 @@ export interface Database {
         Update: { relationship?: string };
         Relationships: [];
       };
+      chat_usage: {
+        Row: {
+          id: string;
+          user_id: string;
+          model: string;
+          used_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          model: string;
+          used_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          model?: string;
+          used_at?: string;
+        };
+        Relationships: [];
+      };
       api_keys: {
         Row: {
           id: string;
@@ -951,6 +972,22 @@ export interface Database {
           id: string;
           content: string;
           similarity: number;
+        }[];
+      };
+      get_chat_usage_today: {
+        Args: {
+          p_user_id: string;
+          p_model: string;
+        };
+        Returns: number;
+      };
+      get_all_chat_usage_today: {
+        Args: {
+          p_user_id: string;
+        };
+        Returns: {
+          model: string;
+          count: number;
         }[];
       };
     };

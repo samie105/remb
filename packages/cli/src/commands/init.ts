@@ -208,22 +208,107 @@ remb serve --project <slug>        # Serve specific project
 
 **Exposed MCP tools**:
 
-Context & scanning:
-- \`save_context\` — persist knowledge about a feature
-- \`get_context\` — recall entries (with optional feature filter)
-- \`load_project_context\` — full project bundle as markdown
-- \`analyze_diff\` — AI-analyze uncommitted git changes
+Remb exposes **42 MCP tools** via \`remb serve\` (or the hosted endpoint). Below is the complete list:
 
-Memory management:
-- \`memory_list\` — list memories; pass \`projectSlug\` to get project + global memories
-- \`memory_create\` — create a memory (omit \`projectSlug\` for global scope)
-- \`memory_update\` — update title, content, tier, category, or tags
-- \`memory_delete\` — delete a memory by ID
-- \`memory_promote\` — change a memory's tier
+**Memory Management:**
+- \`remb__memory_list\` — list memories (filter by tier, category, search)
+- \`remb__memory_search\` — semantic search across all memories
+- \`remb__memory_load_context\` — load all core + active memories as context
+- \`remb__memory_create\` — create a new memory
+- \`remb__memory_update\` — update an existing memory
+- \`remb__memory_delete\` — delete a memory
+- \`remb__memory_promote\` — promote a memory to a higher tier
+- \`remb__memory_stats\` — get memory usage statistics
+- \`remb__memory_image_upload\` — upload an image to memory
+- \`remb__memory_image_list\` — list stored images
 
-Conversation tracking:
-- \`conversation_log\` — record what was discussed/accomplished (call after completing work)
-- \`conversation_history\` — load prior session history (call at session start)
+**Conversation Tracking:**
+- \`remb__conversation_log\` — record what was discussed or accomplished
+- \`remb__conversation_history\` — load recent conversation history
+
+**Project & Context:**
+- \`remb__projects_list\` — list all projects with feature counts
+- \`remb__project_get\` — get project details, features, and latest scan
+- \`remb__context_save\` — save a context entry for a feature
+- \`remb__context_get\` — retrieve context entries (optional feature filter)
+- \`remb__context_bundle\` — full project context as markdown
+
+**Scanning & Analysis:**
+- \`remb__scan_trigger\` — trigger a multi-agent cloud scan
+- \`remb__scan_status\` — check scan progress
+- \`remb__scan_on_push\` — trigger scan on git push
+- \`remb__diff_analyze\` — analyze a git diff and save extracted changes
+
+**Code Graph & Architecture:**
+- \`remb__explore_code_graph\` — explore the code graph: functions, classes, layers, edges
+- \`remb__search_code_symbols\` — semantic search across code symbols
+- \`remb__graph_query\` — query the knowledge graph by entity or feature
+- \`remb__graph_related\` — find related entities by name or context
+
+**Plans & Workflow:**
+- \`remb__plan_list\` — list development plans
+- \`remb__plan_get\` — get plan details with phases
+- \`remb__plan_create_phase\` — add a phase to a plan
+- \`remb__plan_update_phase\` — update phase status (auto-completes plan when all done)
+- \`remb__plan_complete\` — mark a plan as complete
+- \`remb__plan_phases\` — list all phases for a plan
+
+**Cross-Project:**
+- \`remb__cross_project_search\` — search across ALL projects for features, context, and memories
+- \`remb__cross_project_patterns\` — find patterns used across projects
+- \`remb__context_bundle\` — also works with other project slugs to load another project's context
+
+**Session & Protocol:**
+- \`remb__session_start\` — signal session start; loads context automatically
+
+### Cloud Scan Pipeline
+
+When you run \`remb push\`, the server runs a 5-phase multi-agent pipeline:
+
+1. **Scout** — Fetches file tree, downloads tarball, builds import graph, deduplicates against previous scans
+2. **Analyze** — Parallel AI extraction (5 concurrent calls per tier): extracts features, code symbols (functions, classes, hooks, components), and edges (calls, imports, data flows)
+3. **Architect** — LLM analyzes aggregated file summaries to produce semantic architecture layers (api, service, data, ui, auth, config, etc.)
+4. **Review** — Resolves code edges to actual symbol IDs, validates graph integrity, optionally runs LLM for structural diagnostics
+5. **Finalize** — Marks scan complete, schedules continuation if more files remain (max 10 passes)
+
+The result is a rich knowledge graph stored across 4 tables: \`features\`, \`code_nodes\`, \`code_edges\`, \`project_layers\`.
+
+### Code Graph
+
+After scanning, your project has a queryable code graph:
+
+- **code_nodes** — individual functions, classes, components, hooks with their parameters, return types, line numbers, complexity scores, and architecture layer
+- **code_edges** — call/import/data-flow relationships between symbols
+- **project_layers** — semantic architecture zones with auto-detected file patterns
+
+The AI can explore this graph with \`explore_code_graph\` (filter by file, type, layer) and \`search_code_symbols\` (semantic search across all symbols).
+
+### Plans
+
+The AI can create and manage development plans:
+
+\`\`\`
+remb__plan_list           → see all plans for the project
+remb__plan_get <id>       → phases, status, per-phase details
+remb__plan_create_phase   → add a new phase to a plan
+remb__plan_update_phase   → mark phase complete (auto-completes plan when all phases done)
+\`\`\`
+
+### Cross-Project Intelligence
+
+Search memories and patterns across ALL your projects:
+
+\`\`\`
+remb__cross_project_search("authentication pattern")
+→ Returns memories, features, and context entries from every project that matches
+\`\`\`
+
+Load another project's full context to apply its patterns:
+
+\`\`\`
+remb__context_bundle("other-project-slug")
+→ Returns complete markdown context for that project
+\`\`\`
 
 ### remb history
 View conversation history — see what AI discussed and did across sessions.
@@ -461,12 +546,6 @@ function injectIntoIDEContextFiles(cwd: string, slug: string, apiUrl: string, id
   };
 
   const targets: Target[] = [
-    {
-      path: resolve(cwd, ".github", "copilot-instructions.md"),
-      label: ".github/copilot-instructions.md",
-      content: generateCopilotInstructions(slug, apiUrl),
-      enabled: is("vscode"),
-    },
     {
       path: resolve(cwd, ".cursor", "rules", "remb.mdc"),
       label: ".cursor/rules/remb.mdc",
@@ -795,46 +874,6 @@ function mcpToolReference(): string {
 - \`remb__memory_create\` — create with no project_id to save global preferences that apply everywhere`;
 }
 
-function generateCopilotInstructions(slug: string, apiUrl: string): string {
-  return `# Remb — AI Context Management Rules
-
-## Project: \`${slug}\`
-## API: \`${apiUrl}\`
-
-## MANDATORY — Conversation Tracking
-
-You MUST follow these rules in EVERY session:
-
-1. **Session Start**: Call \`remb__conversation_history\` to load recent history and catch up on prior work.
-2. **Load Context**: Call \`remb__memory_load_context\` to load all persistent project memories.
-3. **During Work**: Call \`remb__conversation_log\` after completing significant work to record what was done.
-4. **Session End**: Call \`remb__conversation_log\` with a summary before the conversation ends.
-5. **Save Discoveries**: When you discover important architectural patterns, decisions, or gotchas, call \`remb__memory_create\` to save them.
-
-These calls ensure context persists across sessions. Skipping them causes knowledge loss.
-
-${mcpToolReference()}
-
-## When to Use Each Tool
-
-- **Starting a session** → \`conversation_history\` + \`memory_load_context\`
-- **Need project info** → \`project_get\` or \`context_bundle\`
-- **Saving knowledge** → \`context_save\` (feature-specific) or \`memory_create\` (cross-cutting)
-- **After code changes** → \`scan_trigger\` to refresh, \`diff_analyze\` for targeted analysis
-- **Finishing work** → \`conversation_log\` with summary of what was accomplished
-
-## Cross-Project Referencing
-
-When the user says "do it like I did in project X" or references another project:
-
-1. Call \`remb__projects_list\` to find available projects
-2. Call \`remb__cross_project_search\` with the concept to find matching patterns across all projects
-3. Call \`remb__context_bundle\` with the other project's slug to load its full context
-4. Apply the patterns from that project to the current work
-
-**Global preferences** — memories created without a project_id apply to ALL projects. Use \`remb__memory_create\` with category \"preference\" and no project_id to save cross-project coding standards.`;
-}
-
 function generateCursorRules(slug: string, apiUrl: string): string {
   return `---
 description: Remb context management — mandatory rules for AI sessions
@@ -973,6 +1012,17 @@ ${mcpToolReference()}
 | Finishing work | \`conversation_log\` with summary |
 | "Do it like in project X" | \`cross_project_search\` → \`context_bundle\` with that project slug |
 | Global coding preference | \`memory_create\` with no \`project_id\`, category \`"preference"\` |
+
+## Cross-Project Referencing
+
+When the user says "do it like I did in project X" or references another project:
+
+1. Call \`remb__projects_list\` to find available projects
+2. Call \`remb__cross_project_search\` with the concept to find matching patterns across all projects
+3. Call \`remb__context_bundle\` with the other project's slug to load its full context
+4. Apply the patterns from that project to the current work
+
+**Global preferences** — memories created without a project_id apply to ALL projects. Use \`remb__memory_create\` with category "preference" and no project_id to save cross-project coding standards.
 
 ## Memory Tiers
 

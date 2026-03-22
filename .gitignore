@@ -51,7 +51,4 @@ public/swe-worker-*.js
 .github/instructions/remb-context.instructions.md
 .cursor/rules/remb-context.mdc
 .windsurf/rules/remb-context.md
-
-# Remb dynamic context (auto-generated, do not commit)
-CLAUDE.md
 .remb/

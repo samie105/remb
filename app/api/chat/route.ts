@@ -5,7 +5,9 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { getFileContent } from "@/lib/github-reader";
 import { assembleContext, type ScoredItem } from "@/lib/context-assembler";
 import { getEntityNeighborhood, getRelatedEntities, getFeatureKnowledgeGraph } from "@/lib/graph-actions";
-import { logConversation } from "@/lib/conversation-actions";
+import { logSmartConversation, logConversation } from "@/lib/conversation-actions";
+import { type RawConversationEvent } from "@/lib/conversation-summarizer";
+import { checkChatLimit, recordChatUsage, getChatUsage, type ChatModel } from "@/lib/chat-rate-limit";
 
 /* ─── context loader ─── */
 
@@ -36,7 +38,8 @@ async function loadProjectContext(projectId: string, userId: string, userQuery?:
       userId,
       projectId,
       query: userQuery,
-      tokenBudget: 12000, // chat gets 12K for context, leaving room for system prompt
+      tokenBudget: 24000, // generous budget so the AI gets rich project knowledge
+      recallLimit: 100,
     });
     assembledItems = assembled.items;
 
@@ -65,6 +68,19 @@ async function loadProjectContext(projectId: string, userId: string, userQuery?:
     .eq("status", "active")
     .limit(30);
 
+  // Load rich knowledge from context_entries (key_decisions, gotchas, etc.)
+  const featureIds = (features ?? []).map((f) => f.id);
+  let knowledgeEntries: Array<{ feature_id: string; content: string }> = [];
+  if (featureIds.length > 0) {
+    const { data: ctxEntries } = await db
+      .from("context_entries")
+      .select("feature_id, content")
+      .in("feature_id", featureIds)
+      .order("created_at", { ascending: false })
+      .limit(60);
+    knowledgeEntries = ctxEntries ?? [];
+  }
+
   // File dependency graph (compact)
   const { data: deps } = await db
     .from("file_dependencies")
@@ -77,7 +93,22 @@ async function loadProjectContext(projectId: string, userId: string, userQuery?:
     .filter((i) => i.kind === "conversation")
     .slice(0, 5);
 
-  return { techStack, languages, memories, features: features ?? [], deps: deps ?? [], conversations };
+  // Include code graph nodes from assembled results (granular function/class context)
+  const codeNodes = assembledItems
+    .filter((i) => i.kind === "code_node")
+    .slice(0, 15);
+
+  // Load project layers (architecture analysis results)
+  let projectLayers: Array<{ name: string; slug: string; description: string; file_patterns: string[] }> = [];
+  try {
+    const { data: layers } = await db
+      .from("project_layers" as never)
+      .select("name, slug, description, file_patterns" as never)
+      .eq("project_id" as never, projectId as never);
+    projectLayers = (layers ?? []) as unknown as typeof projectLayers;
+  } catch { /* table may not exist */ }
+
+  return { techStack, languages, memories, features: features ?? [], deps: deps ?? [], conversations, knowledgeEntries, codeNodes, projectLayers };
 }
 
 function buildProjectBlock(
@@ -111,9 +142,31 @@ function buildProjectBlock(
   }
 
   if (ctx.features.length > 0) {
-    lines.push("", "**Features:**");
-    for (const f of ctx.features.slice(0, 20)) {
-      lines.push(`- ${f.name}: ${f.description ?? "No description"}`);
+    // Build a map of feature_id -> knowledge entries
+    const knowledgeByFeature = new Map<string, Array<{ summary?: string; key_decisions?: string[]; gotchas?: string[] }>>();
+    for (const entry of ctx.knowledgeEntries) {
+      try {
+        const parsed = JSON.parse(entry.content);
+        const existing = knowledgeByFeature.get(entry.feature_id) ?? [];
+        existing.push(parsed);
+        knowledgeByFeature.set(entry.feature_id, existing);
+      } catch { /* skip non-JSON content entries */ }
+    }
+
+    lines.push("", "**Features & Knowledge Base:**");
+    for (const f of ctx.features.slice(0, 25)) {
+      lines.push(`- **${f.name}**: ${f.description ?? "No description"}`);
+      const knowledge = knowledgeByFeature.get(f.id);
+      if (knowledge) {
+        for (const k of knowledge.slice(0, 2)) {
+          if (k.key_decisions?.length) {
+            lines.push(`  - Key decisions: ${k.key_decisions.slice(0, 3).join("; ")}`);
+          }
+          if (k.gotchas?.length) {
+            lines.push(`  - Gotchas: ${k.gotchas.slice(0, 3).join("; ")}`);
+          }
+        }
+      }
     }
   }
 
@@ -133,6 +186,22 @@ function buildProjectBlock(
     lines.push("", "**Key File Dependencies:**");
     for (const [source, targets] of [...bySource.entries()].slice(0, 15)) {
       lines.push(`- ${source} → ${targets.join(", ")}`);
+    }
+  }
+
+  // Code graph nodes — granular function/class-level context
+  if (ctx.codeNodes && ctx.codeNodes.length > 0) {
+    lines.push("", "**Relevant Code Symbols (functions, classes, components):**");
+    for (const node of ctx.codeNodes) {
+      lines.push(`- ${node.title}: ${node.content.slice(0, 250)}`);
+    }
+  }
+
+  // Architecture layers from scan
+  if (ctx.projectLayers && ctx.projectLayers.length > 0) {
+    lines.push("", "**Architecture Layers:**");
+    for (const l of ctx.projectLayers) {
+      lines.push(`- **${l.name}** (${l.slug}): ${l.description} — ${l.file_patterns.length} files`);
     }
   }
 
@@ -363,36 +432,6 @@ const CHAT_TOOLS: OpenAI.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
-      name: "show_architecture",
-      description: "Generate and display an architecture diagram panel alongside the chat. Use when the user asks about architecture, system design, or component relationships. Generate nodes (components) and edges (connections) from project context.",
-      parameters: {
-        type: "object",
-        properties: {
-          project_id: { type: "string", description: "Project UUID to generate architecture for" },
-          focus: { type: "string", description: "Optional area to focus on (e.g., 'auth flow', 'data pipeline', 'API layer')" },
-        },
-        required: ["project_id"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "show_diagram",
-      description: "Display a Mermaid diagram panel alongside the chat. Use when the user asks for a flowchart, sequence diagram, ER diagram, or any visual diagram. Generate valid Mermaid syntax.",
-      parameters: {
-        type: "object",
-        properties: {
-          title: { type: "string", description: "Diagram title" },
-          code: { type: "string", description: "Valid Mermaid diagram code (flowchart, sequence, class, ER, etc.)" },
-        },
-        required: ["title", "code"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
       name: "trigger_scan",
       description: "Trigger a code scan for a project. Use when the user asks to rescan, refresh, or update their project's context.",
       parameters: {
@@ -401,6 +440,41 @@ const CHAT_TOOLS: OpenAI.ChatCompletionTool[] = [
           project_id: { type: "string", description: "Project UUID to scan" },
         },
         required: ["project_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "explore_code_graph",
+      description: "Explore the code-level knowledge graph — nodes (files, functions, classes, components) and edges (calls, imports, data flows). Use when the user asks about architecture, how code is connected, what calls what, or wants to understand code structure at the symbol level. Much more granular than feature-level knowledge graph.",
+      parameters: {
+        type: "object",
+        properties: {
+          project_id: { type: "string", description: "Project UUID" },
+          file_path: { type: "string", description: "Filter to a specific file" },
+          node_type: { type: "string", enum: ["file", "function", "class", "component", "hook", "type", "interface", "constant", "middleware", "route"], description: "Filter by node type" },
+          layer: { type: "string", enum: ["api", "service", "data", "ui", "middleware", "utility", "test", "config", "core"], description: "Filter by architecture layer" },
+          include_edges: { type: "boolean", description: "Include edges (calls, imports, data flows) for matched nodes (default: true)" },
+          limit: { type: "number", description: "Max nodes to return (default: 20)" },
+        },
+        required: ["project_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "search_code_symbols",
+      description: "Semantic search across code symbols — functions, classes, components, hooks, types. Returns the most relevant code-level entities for a natural language query. Use when the user asks 'where is X defined', 'find the function that does Y', or 'which component handles Z'.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Natural language search (e.g. 'authentication middleware', 'form validation hook')" },
+          project_id: { type: "string", description: "Project UUID" },
+          limit: { type: "number", description: "Max results (default: 10)" },
+        },
+        required: ["query", "project_id"],
       },
     },
   },
@@ -689,6 +763,123 @@ async function executeTool(
 
       return { result: lines.length ? lines.join("\n") : "No impact data found. Provide either file_path or feature_name." };
     }
+    case "explore_code_graph": {
+      const projectId = args.project_id as string;
+      const limit = Math.min((args.limit as number) ?? 20, 50);
+      const includeEdges = args.include_edges !== false;
+
+      // Build query for code_nodes
+      let nodeQuery = db
+        .from("code_nodes" as never)
+        .select("id, file_path, node_type, name, summary, layer, tags, complexity, structure" as never)
+        .eq("project_id" as never, projectId as never)
+        .limit(limit);
+
+      if (args.file_path) nodeQuery = nodeQuery.eq("file_path" as never, args.file_path as never);
+      if (args.node_type) nodeQuery = nodeQuery.eq("node_type" as never, args.node_type as never);
+      if (args.layer) nodeQuery = nodeQuery.eq("layer" as never, args.layer as never);
+
+      const { data: nodes } = await nodeQuery;
+      const rows = (nodes ?? []) as unknown as Array<{
+        id: string; file_path: string; node_type: string; name: string;
+        summary: string; layer: string; tags: string[]; complexity: string;
+        structure: Record<string, unknown>;
+      }>;
+
+      if (!rows.length) return { result: "No code nodes found matching the filters." };
+
+      const lines: string[] = [`**Code Graph** (${rows.length} nodes):`];
+      for (const n of rows) {
+        const patternTags = (n.tags ?? []).filter((t: string) => t.startsWith("pattern:")).map((t: string) => t.replace("pattern:", ""));
+        const meta = [n.layer, n.complexity, ...patternTags].filter(Boolean).join(", ");
+        lines.push(`- **[${n.node_type}] ${n.name}** (${n.file_path})${meta ? ` — ${meta}` : ""}`);
+        lines.push(`  ${n.summary.slice(0, 200)}`);
+        if (n.structure?.params) lines.push(`  Params: ${(n.structure.params as string[]).join(", ")}`);
+        if (n.structure?.return_type) lines.push(`  Returns: ${n.structure.return_type as string}`);
+      }
+
+      // Fetch edges for these nodes
+      if (includeEdges && rows.length > 0) {
+        const filePaths = [...new Set(rows.map((n) => n.file_path))];
+        const { data: edges } = await db
+          .from("code_edges" as never)
+          .select("source_node_name, source_file, target_node_name, target_file, edge_type, edge_category" as never)
+          .eq("project_id" as never, projectId as never)
+          .in("source_file" as never, filePaths as never);
+
+        const edgeRows = (edges ?? []) as unknown as Array<{
+          source_node_name: string; source_file: string;
+          target_node_name: string; target_file: string;
+          edge_type: string; edge_category: string;
+        }>;
+
+        if (edgeRows.length > 0) {
+          lines.push("", `**Edges** (${edgeRows.length} connections):`);
+          for (const e of edgeRows.slice(0, 30)) {
+            lines.push(`- ${e.source_node_name} → ${e.target_node_name} [${e.edge_type}] (${e.edge_category})`);
+          }
+        }
+      }
+
+      // Include project layers if available
+      const { data: layers } = await db
+        .from("project_layers" as never)
+        .select("name, slug, description, file_patterns" as never)
+        .eq("project_id" as never, projectId as never);
+
+      const layerRows = (layers ?? []) as unknown as Array<{
+        name: string; slug: string; description: string; file_patterns: string[];
+      }>;
+
+      if (layerRows.length > 0) {
+        lines.push("", "**Architecture Layers:**");
+        for (const l of layerRows) {
+          lines.push(`- **${l.name}** (${l.slug}): ${l.description} — ${l.file_patterns.length} files`);
+        }
+      }
+
+      return { result: lines.join("\n") };
+    }
+    case "search_code_symbols": {
+      const queryText = args.query as string;
+      const projectId = args.project_id as string;
+      const limit = Math.min((args.limit as number) ?? 10, 30);
+
+      const { generateEmbedding } = await import("@/lib/openai");
+
+      let embedding: number[];
+      try {
+        embedding = await generateEmbedding(queryText);
+      } catch {
+        return { result: "Failed to generate search embedding." };
+      }
+
+      const { data } = await db.rpc("search_code_nodes" as never, {
+        p_project_id: projectId,
+        query_embedding: `[${embedding.join(",")}]`,
+        match_threshold: 0.25,
+        match_count: limit,
+      } as never);
+
+      const rows = (data ?? []) as unknown as Array<{
+        id: string; name: string; node_type: string; file_path: string;
+        summary: string; layer: string; tags: string[]; complexity: string;
+        structure: Record<string, unknown>; similarity: number;
+      }>;
+
+      if (!rows.length) return { result: "No matching code symbols found." };
+
+      const lines: string[] = [`**Code Symbol Search** — ${rows.length} results for "${queryText}":`];
+      for (const r of rows) {
+        const sim = (r.similarity * 100).toFixed(0);
+        lines.push(`- **[${r.node_type}] ${r.name}** (${r.file_path}) — ${sim}% match, layer: ${r.layer ?? "unknown"}`);
+        lines.push(`  ${r.summary.slice(0, 250)}`);
+        if (r.structure?.params) lines.push(`  Params: ${(r.structure.params as string[]).join(", ")}`);
+        if (r.structure?.return_type) lines.push(`  Returns: ${r.structure.return_type as string}`);
+      }
+
+      return { result: lines.join("\n") };
+    }
     case "get_thread_history": {
       const queryText = args.query as string;
       const { generateEmbedding } = await import("@/lib/openai");
@@ -743,128 +934,6 @@ async function executeTool(
               status: p.status ?? "pending",
             })),
           },
-        },
-      };
-    }
-    case "show_architecture": {
-      const projectId = args.project_id as string;
-      const focus = args.focus as string | undefined;
-
-      const { data: proj } = await db
-        .from("projects")
-        .select("id, name, repo_name")
-        .eq("id", projectId)
-        .eq("user_id", userId)
-        .single();
-
-      if (!proj) return { result: "Project not found." };
-
-      // Build architecture from file dependencies
-      const { data: deps } = await db
-        .from("file_dependencies")
-        .select("source_path, target_path, import_type")
-        .eq("project_id", projectId)
-        .limit(200);
-
-      const { data: features } = await db
-        .from("features")
-        .select("id, name, description, status")
-        .eq("project_id", projectId)
-        .eq("status", "active")
-        .limit(20);
-
-      // Group files into architectural layers
-      const allPaths = new Set<string>();
-      for (const d of deps ?? []) {
-        allPaths.add(d.source_path);
-        allPaths.add(d.target_path);
-      }
-
-      const layerClassify = (p: string): string => {
-        if (p.startsWith("app/api/") || p.startsWith("pages/api/")) return "backend";
-        if (p.startsWith("app/") || p.startsWith("pages/") || p.startsWith("components/")) return "frontend";
-        if (p.includes("supabase") || p.includes("prisma") || p.includes("drizzle") || p.endsWith(".sql")) return "database";
-        if (p.startsWith("lib/") || p.startsWith("utils/") || p.startsWith("helpers/")) return "service";
-        if (p.startsWith("trigger/") || p.startsWith("workers/") || p.startsWith("jobs/")) return "service";
-        return "service";
-      };
-
-      // Group by directory for cleaner nodes
-      const dirGroups = new Map<string, { paths: string[]; layer: string }>();
-      for (const p of allPaths) {
-        const parts = p.split("/");
-        const dir = parts.length > 1 ? parts.slice(0, 2).join("/") : parts[0];
-        if (!dirGroups.has(dir)) {
-          dirGroups.set(dir, { paths: [], layer: layerClassify(p) });
-        }
-        dirGroups.get(dir)!.paths.push(p);
-      }
-
-      // Filter by focus if provided
-      let filteredDirs = [...dirGroups.entries()];
-      if (focus) {
-        const focusLower = focus.toLowerCase();
-        filteredDirs = filteredDirs.filter(([dir, info]) =>
-          dir.toLowerCase().includes(focusLower) ||
-          info.paths.some((p) => p.toLowerCase().includes(focusLower))
-        );
-        // If focus filter is too aggressive, fall back to all
-        if (filteredDirs.length < 2) filteredDirs = [...dirGroups.entries()];
-      }
-
-      const nodes = filteredDirs.slice(0, 20).map(([dir, info]) => ({
-        id: dir,
-        label: dir,
-        type: info.layer,
-        description: `${info.paths.length} files`,
-      }));
-
-      const nodeIds = new Set(nodes.map((n) => n.id));
-      const edgeMap = new Map<string, { source: string; target: string; count: number }>();
-      for (const d of deps ?? []) {
-        const sourceDir = d.source_path.split("/").slice(0, 2).join("/");
-        const targetDir = d.target_path.split("/").slice(0, 2).join("/");
-        if (sourceDir !== targetDir && nodeIds.has(sourceDir) && nodeIds.has(targetDir)) {
-          const key = `${sourceDir}->${targetDir}`;
-          if (!edgeMap.has(key)) edgeMap.set(key, { source: sourceDir, target: targetDir, count: 0 });
-          edgeMap.get(key)!.count++;
-        }
-      }
-
-      const edges = [...edgeMap.values()].map((e) => ({
-        source: e.source,
-        target: e.target,
-        label: e.count > 1 ? `${e.count} imports` : undefined,
-      }));
-
-      return {
-        result: `Architecture for **${proj.name}**${focus ? ` (focused on "${focus}")` : ""}: ${nodes.length} components, ${edges.length} connections.${features?.length ? `\n\nActive features: ${features.map((f) => f.name).join(", ")}` : ""}`,
-        action: { type: "panel" },
-        panel: {
-          id: `arch-${projectId}`,
-          type: "architecture",
-          title: `${proj.name} Architecture`,
-          data: {
-            title: `${proj.name} Architecture`,
-            description: focus ? `Focused on: ${focus}` : "Full project architecture",
-            nodes,
-            edges,
-          },
-        },
-      };
-    }
-    case "show_diagram": {
-      const title = args.title as string;
-      const code = args.code as string;
-
-      return {
-        result: `Showing diagram: "${title}"`,
-        action: { type: "panel" },
-        panel: {
-          id: `diagram-${Date.now()}`,
-          type: "mermaid",
-          title,
-          data: { title, code },
         },
       };
     }
@@ -949,15 +1018,29 @@ export async function POST(req: NextRequest) {
     currentPath?: string;
     contextFiles?: Array<{ path: string; projectId: string; projectName: string }>;
     uploadedFiles?: Array<{ name: string; content: string }>;
+    modelMode?: ChatModel;
+    conversationId?: string | null;
   };
 
-  const { message, history, projectId, currentPath, contextFiles, uploadedFiles } = body;
+  const { message, history, projectId, currentPath, contextFiles, uploadedFiles, conversationId } = body;
+  const modelMode: ChatModel = body.modelMode === "o4-mini" ? "o4-mini" : "gpt-4.1";
+
   if (!message?.trim()) {
     return new Response("Missing message", { status: 400 });
   }
 
   const db = createAdminClient();
   const userId = session.dbUser.id;
+
+  // ── Rate limiting: check if user has remaining prompts for this model ──
+  const remaining = await checkChatLimit(userId, modelMode);
+  if (remaining <= 0) {
+    const usage = await getChatUsage(userId);
+    return Response.json(
+      { error: "rate_limit", message: `You've used all ${modelMode} prompts for today. Try the other model.`, usage },
+      { status: 429 },
+    );
+  }
 
   // Resolve project from the current URL path (e.g. /dashboard/my-project → my-project)
   const pathProject = await resolveProjectFromPath(currentPath, userId);
@@ -1014,13 +1097,32 @@ export async function POST(req: NextRequest) {
     .map((p) => `- ${p.name} (slug: ${p.slug}, id: ${p.id})${p.slug === contextProject?.slug ? " ← current" : ""}`)
     .join("\n");
 
-  const systemPrompt = `You are Remb AI — a sharp, concise assistant embedded in a developer tools platform. You float as a persistent chat panel across every page.
+  const systemPrompt = `You are Remb AI — a friendly, curious companion built into a developer tools platform. Think of yourself as that one developer friend who's genuinely fascinated by whatever the user is building. You're part teacher, part student — you explain things clearly but you're also eager to understand and explore ideas together.
 
-## How you communicate
-- Brief, direct, conversational. No walls of text. Short paragraphs.
-- Reference actual project names, files, and features — you know this codebase.
-- Use markdown naturally — code snippets, bold, short lists when they help.
-- Ask clarifying questions when needed instead of guessing.
+## Your personality
+- You're warm, expressive, and conversational — like chatting with a friend about a cool side project over coffee.
+- Be narrative — don't just answer, tell the story. "Oh nice, so this is your auth flow — looks like you went with..." instead of "The auth flow uses..."
+- Use the project's actual names, files, features — talk about THEIR project like you genuinely care about it. Never say "this project" generically — say "${contextProject?.name ?? "your project"}" by name.
+- Use markdown naturally — bold, short lists, code snippets when helpful. Keep paragraphs short and punchy.
+- Show genuine curiosity. Ask follow-up questions. "That's a cool pattern — are you planning to extend this to...?"
+- When you reason through something, think out loud. "Hmm, looking at this... I think what's happening is..."
+- Don't be robotic or overly formal. Contractions are great. Personality > precision formatting.
+
+## Response depth
+- **Be thorough and detailed.** The project context below is a real knowledge base — use it. Reference specific features, architectural decisions, gotchas, and file dependencies in your answers.
+- When explaining how something works, walk through the actual architecture: which files are involved, what patterns were chosen, and WHY those decisions were made (you'll see this in "Key decisions" and "Gotchas" data).
+- Don't summarize when you can explain. If the user asks "how does X work?", give them the full picture — not a one-liner.
+- When the project context includes gotchas or warnings, proactively mention them — the user will appreciate knowing about edge cases.
+- If you have rich knowledge about a feature (key decisions, dependencies, gotchas), share it even if the user didn't specifically ask — context is always valuable.
+
+## Diagrams & visuals
+- When asked for ANY diagram (flowchart, sequence, ER, architecture, etc.) — write it DIRECTLY in your response as a \`\`\`mermaid code block. The UI renders these inline automatically.
+- NEVER use the show_diagram tool — always use inline mermaid blocks instead.
+- **Critical mermaid syntax rules** (to prevent parse errors):
+  - Never put parentheses () inside square brackets []. Use quotes: \`A["Futures Page - app/futures/page.ts"]\` not \`A[Futures Page(app/futures/page.ts)]\`
+  - For node labels with special chars, wrap in quotes: \`A["My Label (details)"]\`
+  - Keep node IDs simple alphanumeric: \`A\`, \`B1\`, \`authFlow\` etc.
+- NEVER show raw source code from the project unless the user explicitly asks to see code. Describe what the code does narratively instead.
 
 ## Context awareness
 ${contextProject ? `The user is currently on the **${contextProject.name}** project page (${currentPath}). When they say "this project", "the project", "this", "it", etc. — they mean **${contextProject.name}** (id: ${contextProject.id}).` : `The user is on ${currentPath || "an unknown page"}. No specific project page is open. If they reference a project ambiguously, use search_projects or check the project list below.`}
@@ -1034,14 +1136,14 @@ ${contextProject ? `The user is currently on the **${contextProject.name}** proj
 - **create_plan** — create a new plan for a project.
 - **create_phase** — add a phase to an existing plan.
 - **list_plans** — list plans for a project.
-- **query_knowledge_graph** — traverse the knowledge graph from any entity. Use to find connections between features, memories, conversations, and code.
+- **query_knowledge_graph** — traverse the knowledge graph from any entity. Find connections between features, memories, conversations, and code.
 - **search_memories** — semantic search across all memories. Find past decisions, patterns, gotchas, and preferences.
-- **get_impact_analysis** — analyze what code/features would be affected by changing a file or feature. Shows downstream consumers and dependencies.
-- **get_thread_history** — find past conversation threads related to a topic. Use when the user references prior discussions.
-- **show_plan_tree** — display a plan as an interactive visual tree panel. Use after creating or finding a plan.
-- **show_architecture** — generate and show an architecture diagram from project structure. Use when asked about architecture or system design.
-- **show_diagram** — render any Mermaid diagram (flowchart, sequence, ER, class, etc.) in a side panel. Use when the user asks for visual diagrams.
+- **get_impact_analysis** — analyze what code/features would be affected by changing a file or feature.
+- **get_thread_history** — find past conversation threads related to a topic.
+- **show_plan_tree** — display a plan as an interactive visual tree panel. Use after creating or finding a plan. This is the ONLY thing that goes in the side panel.
 - **trigger_scan** — rescan a project's codebase. Use when the user asks to refresh or update project context.
+- **explore_code_graph** — explore the code-level graph: functions, classes, components, hooks, their layers (api/service/data/ui), and edges (calls/imports/data flows). Use when the user asks about architecture, code structure, or "what calls what".
+- **search_code_symbols** — semantic search across code symbols. Use when the user asks "where is X defined", "find the function that...", or "which component handles...".
 
 ## Smart behavior
 1. **When the user asks about "this project"** — you ALREADY have the current project context below. ${contextProject ? `Use get_project_context with id "${contextProject.id}" if you need deeper info.` : "Ask them to specify which project or navigate to one."}
@@ -1050,10 +1152,14 @@ ${contextProject ? `The user is currently on the **${contextProject.name}** proj
 4. **For theme/navigation actions** — embed action tags in your response (stripped by the UI):
    - Theme: \`[ACTION:theme:dark]\`, \`[ACTION:theme:light]\`, \`[ACTION:theme:system]\`
    - Navigate: \`[ACTION:navigate:/dashboard/my-project]\`
-5. **When the user asks about dependencies or impact** — use get_impact_analysis to show what depends on a file or feature.
-6. **When the user asks about past decisions or patterns** — use search_memories to recall relevant knowledge.
-7. **When the user asks "what's related to X"** — use query_knowledge_graph to traverse entity relationships.
-8. **When the user references a prior conversation** — use get_thread_history to load related context.
+5. **When the user asks about dependencies or impact** — use get_impact_analysis.
+6. **When the user asks about past decisions or patterns** — use search_memories.
+7. **When the user asks "what's related to X"** — use query_knowledge_graph.
+8. **When the user references a prior conversation** — use get_thread_history.
+9. **For ANY diagram request** — write a \`\`\`mermaid block directly in your response. Do NOT use show_diagram tool.
+10. **When the user asks about architecture, layers, or code structure** — use explore_code_graph to walk the code graph.
+11. **When the user asks "where is X" or "find the function that..."** — use search_code_symbols for semantic code search.
+12. **When the user asks "what calls X" or "trace the flow"** — use explore_code_graph with the specific file_path and include_edges=true.
 
 ## User's projects
 ${projectList || "No projects yet."}${projectContextSection}${globalMemorySection}`;
@@ -1143,18 +1249,21 @@ ${projectList || "No projects yet."}${projectContextSection}${globalMemorySectio
         let loopCount = 0;
         const maxLoops = 8;
         let fullResponseContent = "";
+        let toolsUsedCount = 0;
 
         while (loopCount < maxLoops) {
           loopCount++;
 
-          const response = await openai.chat.completions.create({
-            model: process.env.OPENAI_CHAT_MODEL ?? "gpt-4.1",
-            temperature: 0.7,
-            max_tokens: 4096,
+          const isO4Mini = modelMode === "o4-mini";
+          const modelConfig = {
+            model: isO4Mini ? "o4-mini" : (process.env.OPENAI_CHAT_MODEL ?? "gpt-4.1"),
+            ...(isO4Mini ? { max_completion_tokens: 4096 } : { max_tokens: 4096, temperature: 0.7 }),
             messages: currentMessages,
             tools: CHAT_TOOLS,
-            stream: true,
-          });
+            stream: true as const,
+          };
+
+          const response = await openai.chat.completions.create(modelConfig);
 
           let accumulatedContent = "";
           const toolCalls: Array<{
@@ -1212,6 +1321,7 @@ ${projectList || "No projects yet."}${projectContextSection}${globalMemorySectio
               /* malformed */
             }
 
+            toolsUsedCount++;
             send("tool_call", { name: tc.name, args });
 
             const { result, action, panel } = await executeTool(tc.name, args, userId);
@@ -1230,21 +1340,58 @@ ${projectList || "No projects yet."}${projectContextSection}${globalMemorySectio
           }
         }
 
-        // Save conversation to DB for syncing
+        // Record usage + save conversation
         if (fullResponseContent.trim()) {
-          const sessionId = `web-${userId}-${Date.now()}`;
+          // Record rate-limit usage
+          recordChatUsage(userId, modelMode).catch(() => {/* non-critical */});
+
+          // Stable session_id: reuse conversationId from frontend, or generate one per conversation
+          const stableSessionId = conversationId
+            ? `web-${conversationId}`
+            : `web-${userId}-${Date.now()}`;
           const projectIdForLog = contextProject?.id ?? null;
           const projectSlugForLog = contextProject?.slug ?? null;
-          logConversation({
+
+          // Save individual user + assistant messages so they can be loaded back as real chat
+          const sharedFields = {
             userId,
             projectId: projectIdForLog,
             projectSlug: projectSlugForLog,
-            sessionId,
-            type: "conversation",
-            content: `**User**: ${message}\n\n**Assistant**: ${fullResponseContent}`,
-            tags: ["web-chat"],
-            source: "web",
+            sessionId: stableSessionId,
+            type: "conversation" as const,
+            source: "web" as const,
+          };
+          logConversation({
+            ...sharedFields,
+            content: message,
+            metadata: { role: "user", model: modelMode },
+            skipEmbedding: true,
+          }).catch(() => {});
+          logConversation({
+            ...sharedFields,
+            content: fullResponseContent,
+            metadata: { role: "assistant", model: modelMode, toolsUsed: toolsUsedCount },
+            skipEmbedding: true,
+          }).catch(() => {});
+
+          // Smart logging (background): summarizes, extracts knowledge, creates memories
+          const events: RawConversationEvent[] = [
+            { type: "user_message", text: message, timestamp: Date.now() },
+            { type: "ai_response", text: fullResponseContent, timestamp: Date.now() },
+          ];
+          logSmartConversation({
+            userId,
+            projectId: projectIdForLog,
+            projectSlug: projectSlugForLog,
+            sessionId: `${stableSessionId}-summary`,
+            events,
+            source: "web-internal",
+            metadata: { model: modelMode, toolsUsed: toolsUsedCount, isSummary: true },
           }).catch(() => {/* non-critical */});
+
+          // Send updated usage back so the frontend can update remaining counts
+          const updatedUsage = await getChatUsage(userId);
+          send("usage", { usage: updatedUsage });
         }
 
         send("done", {});

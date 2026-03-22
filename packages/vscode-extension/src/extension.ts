@@ -164,7 +164,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // ── Auto-generate AI instructions ─────────────────────────
   const instructions = new InstructionsManager(workspace, auth, api);
-  instructions.setCapture(capture);
+  // instructions no longer needs capture — dynamic context does not include session activity
   await instructions.sync();
   // Kick off dynamic context fetch (non-blocking)
   instructions.syncDynamic().catch(() => {});

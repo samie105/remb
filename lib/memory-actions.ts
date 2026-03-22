@@ -571,6 +571,8 @@ export async function generateProjectMemories(
 
   if (!project) throw new Error("Project not found");
 
+  const MAX_MEMORIES_PER_PROJECT = 30;
+
   // Gather all features with their context entries
   const { data: features } = await db
     .from("features")
@@ -658,9 +660,29 @@ export async function generateProjectMemories(
     throw new Error("AI could not generate memories from the project data. Try running a scan first.");
   }
 
-  // Create memory records
+  // Create memory records — auto-replace least relevant if at the 30 limit
+  // Fetch existing memories for this project to check capacity
+  const { data: existingMemories } = await db
+    .from("memories")
+    .select("id, title, access_count, created_at")
+    .eq("user_id", user.id)
+    .eq("project_id", projectId)
+    .order("access_count", { ascending: true })
+    .order("created_at", { ascending: true });
+
+  const existingCount = existingMemories?.length ?? 0;
+  const slotsAvailable = MAX_MEMORIES_PER_PROJECT - existingCount;
+
+  // If we need more slots, delete least-accessed memories to make room
+  let slotsToFree = synthesized.length - slotsAvailable;
+  if (slotsToFree > 0 && existingMemories?.length) {
+    const toDelete = existingMemories.slice(0, slotsToFree).map((m) => m.id);
+    await db.from("memories").delete().in("id", toDelete);
+    slotsToFree = 0;
+  }
+
   const created: MemoryRow[] = [];
-  for (const mem of synthesized) {
+  for (const mem of synthesized.slice(0, MAX_MEMORIES_PER_PROJECT)) {
     const tokenCount = estimateTokens(mem.content);
 
     let embedding: string | null = null;

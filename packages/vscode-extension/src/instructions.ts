@@ -2,7 +2,6 @@ import * as vscode from "vscode";
 import type { WorkspaceDetector } from "./workspace";
 import type { AuthManager } from "./auth";
 import type { ApiClient } from "./api-client";
-import type { ConversationCapture } from "./conversation-capture";
 
 const VERSION_MARKER = "<!-- remb-instructions:v2 -->";
 const DYNAMIC_MARKER = "<!-- remb-dynamic-context -->";
@@ -38,7 +37,7 @@ interface InstructionTarget {
  *   Read automatically at session start.
  */
 const TARGETS: InstructionTarget[] = [
-  { dir: ".github/instructions", file: "remb.instructions.md", frontmatter: true },
+  { dir: ".github/instructions", file: "remb-session.instructions.md", frontmatter: true },
   { dir: ".cursor/rules", file: "remb.mdc", frontmatter: true },
   { dir: ".windsurf/rules", file: "remb.md", frontmatter: false },
 ];
@@ -48,8 +47,6 @@ const DYNAMIC_TARGETS: InstructionTarget[] = [
   { dir: ".github/instructions", file: "remb-context.instructions.md", frontmatter: true },
   { dir: ".cursor/rules", file: "remb-context.mdc", frontmatter: true },
   { dir: ".windsurf/rules", file: "remb-context.md", frontmatter: false },
-  // Claude Code reads CLAUDE.md from project root
-  { dir: ".", file: "CLAUDE.md", frontmatter: false },
 ];
 
 /** Paths to add to .gitignore for dynamic context files. */
@@ -57,7 +54,6 @@ const DYNAMIC_GITIGNORE_ENTRIES = [
   ".github/instructions/remb-context.instructions.md",
   ".cursor/rules/remb-context.mdc",
   ".windsurf/rules/remb-context.md",
-  "CLAUDE.md",
   ".remb/",
 ];
 
@@ -73,7 +69,6 @@ const DYNAMIC_GITIGNORE_ENTRIES = [
 export class InstructionsManager {
   private disposables: vscode.Disposable[] = [];
   private refreshTimer: ReturnType<typeof setInterval> | undefined;
-  private capture: ConversationCapture | undefined;
   private isSyncingDynamic = false;
 
   constructor(
@@ -94,11 +89,6 @@ export class InstructionsManager {
 
     // Periodically refresh dynamic context so it stays current
     this.refreshTimer = setInterval(() => this.syncDynamic(), getDynamicRefreshInterval());
-  }
-
-  /** Set the capture instance so dynamic context can include session activity. */
-  setCapture(capture: ConversationCapture): void {
-    this.capture = capture;
   }
 
   /** Create or update the static instructions files if a project is active. */
@@ -168,36 +158,21 @@ export class InstructionsManager {
 
     const root = workspaceFolders[0].uri;
 
-    // Fetch context, history, and memories in parallel
-    const [bundle, history, memories] = await Promise.all([
+    // Fetch context and memories in parallel (no history/activity — those are loaded via MCP tools)
+    const [bundle, memories] = await Promise.all([
       this.api.bundleContext(slug).catch(() => null),
-      this.api
-        .getConversationHistory({ projectSlug: slug, limit: 8, format: "markdown" })
-        .catch(() => null),
       this.api
         .listMemories({ tier: "core", limit: 10 })
         .catch(() => null),
     ]);
 
     // Nothing to write if all fetches failed
-    if (!bundle && !history && !memories) return;
+    if (!bundle && !memories) return;
 
     // Build compact sections
     let contextSection = "";
     if (bundle?.markdown) {
       contextSection = truncateAtSectionBoundary(bundle.markdown, 4000);
-    }
-
-    let historySection = "";
-    if (history?.entries?.length) {
-      historySection =
-        "## Recent Session History\n\n" +
-        history.entries
-          .map(
-            (e) =>
-              `- **[${e.created_at.slice(0, 16)}]** (${e.type}) ${e.content.slice(0, 200)}`
-          )
-          .join("\n");
     }
 
     let memoriesSection = "";
@@ -209,21 +184,13 @@ export class InstructionsManager {
       for (const m of memories.memories) {
         const block = `### ${m.title} (${m.category})\n${m.content}`;
         if (used + block.length > memoryBudget && blocks.length > 0) {
-          blocks.push(`\n_...${memories.memories.length - blocks.length} more memories — call \`remb_loadProjectContext\` for all_`);
+          blocks.push(`\n_...${memories.memories.length - blocks.length} more memories — call \`remb__memory_load_context\` for all_`);
           break;
         }
         blocks.push(block);
         used += block.length;
       }
       memoriesSection = "## Core Memories\n\n" + blocks.join("\n\n");
-    }
-
-    // Build session activity section from capture (real-time, no API call)
-    let activitySection = "";
-    const activityLines = this.capture?.getRecentActivity(20);
-    if (activityLines?.length) {
-      activitySection =
-        "## Current Session Activity\n\n" + activityLines.join("\n");
     }
 
     // Read installed skills from .remb.yml
@@ -249,9 +216,7 @@ export class InstructionsManager {
     const dynamicBody = generateDynamicBody(
       slug,
       contextSection,
-      historySection,
       memoriesSection,
-      activitySection,
       skillsSection,
     );
 
@@ -353,7 +318,7 @@ function truncateAtSectionBoundary(md: string, maxChars: number): string {
     result = md.slice(0, maxChars);
   }
 
-  return result + "\n\n_(truncated — call `remb_loadProjectContext` for full context)_";
+  return result + "\n\n_(truncated — call `remb__context_bundle` for full context)_";
 }
 
 function generateBody(slug: string): string {
@@ -368,43 +333,43 @@ Current project: **${slug}**
 Follow this protocol in EVERY session. Skipping causes knowledge loss.
 
 ### Session Start (do FIRST, before any other work):
-1. Call \`remb_loadProjectContext\` — loads the full project context bundle (memories, features, tech stack). Without this, you have NO context about this project.
-2. Call \`remb_conversationHistory\` — loads what was discussed and accomplished in prior sessions so you can pick up where the user left off.
+1. Call \`remb__conversation_history\` — loads what was discussed and accomplished in prior sessions so you can pick up where the user left off.
+2. Call \`remb__memory_load_context\` — loads the full project context bundle (memories, features, tech stack).
 
 ### During Work:
-3. Call \`remb_conversationLog\` after completing any significant task, bug fix, or feature — records what was done for future sessions.
-4. Call \`remb_createMemory\` when you discover important patterns, architectural decisions, or gotchas worth preserving.
+3. Call \`remb__conversation_log\` after completing any significant task, bug fix, or feature — records what was done for future sessions.
+4. Call \`remb__memory_create\` when you discover important patterns, architectural decisions, or gotchas worth preserving.
 
 ### Session End (do LAST, before the conversation ends):
-5. Call \`remb_conversationLog\` with a summary of: what was asked, what was done, key decisions made.
+5. Call \`remb__conversation_log\` with a summary of: what was asked, what was done, key decisions made.
 
 ## Available Tools
 
 | Tool | Purpose | When to Call |
 |------|---------|--------------|
-| \`remb_loadProjectContext\` | Full project context bundle — memories, features, tech stack | **Session start** (mandatory) |
-| \`remb_conversationHistory\` | Prior session history — what was done before | **Session start** (mandatory) |
-| \`remb_conversationLog\` | Record work done in this session | After completing tasks, and at session end |
-| \`remb_saveContext\` | Save feature-specific context or decisions | When you learn something about a specific feature |
-| \`remb_getContext\` | Retrieve context for a specific feature | When you need details about a feature |
-| \`remb_listMemories\` | Browse persistent memories | When searching for past decisions or patterns |
-| \`remb_createMemory\` | Save a new persistent memory | When discovering patterns, decisions, gotchas |
-| \`remb_triggerScan\` | Re-scan the codebase from GitHub or locally | After significant code changes |
-| \`remb_scanStatus\` | Check scan progress | After triggering a scan |
+| \`remb__memory_load_context\` | Full project context bundle — memories, features, tech stack | **Session start** (mandatory) |
+| \`remb__conversation_history\` | Prior session history — what was done before | **Session start** (mandatory) |
+| \`remb__conversation_log\` | Record work done in this session | After completing tasks, and at session end |
+| \`remb__context_save\` | Save feature-specific context or decisions | When you learn something about a specific feature |
+| \`remb__context_get\` | Retrieve context for a specific feature | When you need details about a feature |
+| \`remb__memory_list\` | Browse persistent memories | When searching for past decisions or patterns |
+| \`remb__memory_create\` | Save a new persistent memory | When discovering patterns, decisions, gotchas |
+| \`remb__scan_trigger\` | Re-scan the codebase from GitHub or locally | After significant code changes |
+| \`remb__scan_status\` | Check scan progress | After triggering a scan |
 
 ## Decision Matrix
 
 | Situation | Action |
 |-----------|--------|
-| Starting any session | \`remb_loadProjectContext\` + \`remb_conversationHistory\` |
-| Completing a task | \`remb_conversationLog\` with what was accomplished |
-| Found a reusable pattern | \`remb_createMemory\` with category "pattern" |
-| Made an architectural decision | \`remb_createMemory\` with category "decision" |
-| Discovered a gotcha or bug | \`remb_createMemory\` with category "gotcha" |
-| Need info about a feature | \`remb_getContext\` filtered by feature name |
-| User says "remember this" | \`remb_createMemory\` with appropriate tier |
-| Code changed significantly | \`remb_triggerScan\` to refresh context |
-| Ending the session | \`remb_conversationLog\` with session summary |
+| Starting any session | \`remb__conversation_history\` + \`remb__memory_load_context\` |
+| Completing a task | \`remb__conversation_log\` with what was accomplished |
+| Found a reusable pattern | \`remb__memory_create\` with category "pattern" |
+| Made an architectural decision | \`remb__memory_create\` with category "decision" |
+| Discovered a gotcha or bug | \`remb__memory_create\` with category "gotcha" |
+| Need info about a feature | \`remb__context_get\` filtered by feature name |
+| User says "remember this" | \`remb__memory_create\` with appropriate tier |
+| Code changed significantly | \`remb__scan_trigger\` to refresh context |
+| Ending the session | \`remb__conversation_log\` with session summary |
 `;
 }
 
@@ -422,13 +387,12 @@ function generatePlain(slug: string): string {
 /**
  * Generates the dynamic context body with actual project data.
  * This is the content that gets injected into every IDE prompt.
+ * Only includes memories and project context — NOT conversation history or activity.
  */
 function generateDynamicBody(
   slug: string,
   context: string,
-  history: string,
   memories: string,
-  activity: string,
   skills?: string,
 ): string {
   const timestamp = new Date().toISOString().slice(0, 16);
@@ -438,7 +402,7 @@ function generateDynamicBody(
     ``,
     `> **Project**: ${slug} | **Refreshed**: ${timestamp}`,
     `> This file is auto-generated and gitignored. It injects real project context into every prompt.`,
-    `> For the full context bundle, call \`remb_loadProjectContext\`.`,
+    `> For the full context bundle, call \`remb__context_bundle\`.`,
     ``,
   ];
 
@@ -450,14 +414,6 @@ function generateDynamicBody(
     sections.push(memories, "");
   }
 
-  if (activity) {
-    sections.push(activity, "");
-  }
-
-  if (history) {
-    sections.push(history, "");
-  }
-
   if (context) {
     sections.push("## Project Context Summary", "", context, "");
   }
@@ -465,7 +421,7 @@ function generateDynamicBody(
   sections.push(
     "---",
     "",
-    "_You already have the above context. Use `remb_conversationLog` to record what you accomplish in this session. Use `remb_createMemory` for important discoveries._",
+    "_You already have the above context. Use `remb__conversation_log` to record what you accomplish in this session. Use `remb__memory_create` for important discoveries._",
     ""
   );
 

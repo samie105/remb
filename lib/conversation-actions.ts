@@ -24,7 +24,9 @@ interface LogConversationInput {
   content: string;
   tags?: string[];
   metadata?: Record<string, unknown>;
-  source?: "mcp" | "cli" | "web" | "api";
+  source?: "mcp" | "cli" | "web" | "web-internal" | "api";
+  /** Skip embedding generation and dedup check (for raw chat messages) */
+  skipEmbedding?: boolean;
 }
 
 /**
@@ -38,7 +40,7 @@ interface LogSmartConversationInput {
   sessionId: string;
   events: RawConversationEvent[];
   metadata?: Record<string, unknown>;
-  source?: "mcp" | "cli" | "web" | "api" | "import";
+  source?: "mcp" | "cli" | "web" | "web-internal" | "api" | "import";
   ideSource?: IDESource;
 }
 
@@ -75,39 +77,41 @@ export async function logConversation(input: LogConversationInput) {
     ? input.content.slice(0, MAX_CONVERSATION_BYTES - 20) + "\n... (trimmed)"
     : input.content;
 
-  // Generate embedding for the content so it's searchable
+  // Generate embedding for the content so it's searchable (skip for raw chat messages)
   let embedding: number[] | null = null;
-  try {
-    embedding = await generateEmbedding(trimmedContent.slice(0, 8000));
-  } catch { /* non-fatal — entry still saved without embedding */ }
+  if (!input.skipEmbedding) {
+    try {
+      embedding = await generateEmbedding(trimmedContent.slice(0, 8000));
+    } catch { /* non-fatal — entry still saved without embedding */ }
 
-  // Dedup check: if very similar entry exists recently, update it instead
-  if (embedding && input.projectSlug) {
-    const dup = await findDuplicateConversation(
-      input.userId,
-      input.projectSlug,
-      embedding,
-    );
-    if (dup) {
-      // Merge — append new content to existing entry
-      const merged = `${dup.content}\n---\n${trimmedContent}`;
-      const mergedTrimmed = new TextEncoder().encode(merged).length > MAX_CONVERSATION_BYTES
-        ? merged.slice(0, MAX_CONVERSATION_BYTES - 20) + "\n... (trimmed)"
-        : merged;
+    // Dedup check: if very similar entry exists recently, update it instead
+    if (embedding && input.projectSlug) {
+      const dup = await findDuplicateConversation(
+        input.userId,
+        input.projectSlug,
+        embedding,
+      );
+      if (dup) {
+        // Merge — append new content to existing entry
+        const merged = `${dup.content}\n---\n${trimmedContent}`;
+        const mergedTrimmed = new TextEncoder().encode(merged).length > MAX_CONVERSATION_BYTES
+          ? merged.slice(0, MAX_CONVERSATION_BYTES - 20) + "\n... (trimmed)"
+          : merged;
 
-      const { data, error } = await db
-        .from("conversation_entries")
-        .update({
-          content: mergedTrimmed,
-          tags: input.tags ?? [],
-          metadata: (input.metadata ?? {}) as Json,
-          embedding: `[${embedding.join(",")}]`,
-        })
-        .eq("id", dup.id)
-        .select("id, created_at")
-        .single();
+        const { data, error } = await db
+          .from("conversation_entries")
+          .update({
+            content: mergedTrimmed,
+            tags: input.tags ?? [],
+            metadata: (input.metadata ?? {}) as Json,
+            embedding: `[${embedding.join(",")}]`,
+          })
+          .eq("id", dup.id)
+          .select("id, created_at")
+          .single();
 
-      if (!error && data) return { ...data, deduplicated: true };
+        if (!error && data) return { ...data, deduplicated: true };
+      }
     }
   }
 
@@ -146,7 +150,7 @@ export async function logConversation(input: LogConversationInput) {
 
 export async function logSmartConversation(input: LogSmartConversationInput) {
   // Step 1: AI summarize the raw events (now with knowledge extraction)
-  const { summary, tags, embedding, extractedKnowledge, referencedFeatures, referencedFiles } = await summarizeConversation(
+  const { title, summary, tags, embedding, extractedKnowledge, referencedFeatures, referencedFiles } = await summarizeConversation(
     input.events,
     input.projectSlug ?? undefined,
   );
@@ -160,9 +164,10 @@ export async function logSmartConversation(input: LogSmartConversationInput) {
     ),
   ];
 
-  // Merge files_changed + referenced data into metadata
+  // Merge files_changed + referenced data into metadata (include title for display)
   const metadata = {
     ...(input.metadata ?? {}),
+    ...(title ? { title } : {}),
     ...(filesChanged.length > 0 ? { files_changed: filesChanged } : {}),
     ...(referencedFeatures.length > 0 ? { referenced_features: referencedFeatures } : {}),
     ...(referencedFiles.length > 0 ? { referenced_files: referencedFiles } : {}),
@@ -266,7 +271,7 @@ export async function logSmartConversation(input: LogSmartConversationInput) {
     ).catch(() => {});
   }
 
-  return { ...data, summary, tags };
+  return { ...data, title, summary, tags };
 }
 
 /* ─── search conversations semantically ─── */
@@ -282,7 +287,7 @@ export async function searchConversationHistory(input: SearchConversationInput) 
 
 /* ─── query conversation history ─── */
 
-export async function getConversationHistory(input: GetHistoryInput) {
+export async function getConversationHistory(input: GetHistoryInput & { source?: string }) {
   const db = createAdminClient();
   const limit = Math.min(input.limit ?? 50, 200);
 
@@ -302,6 +307,9 @@ export async function getConversationHistory(input: GetHistoryInput) {
   if (input.sessionId) {
     query = query.eq("session_id", input.sessionId);
   }
+  if (input.source) {
+    query = query.eq("source", input.source);
+  }
   if (input.startDate) {
     query = query.gte("created_at", input.startDate);
   }
@@ -316,7 +324,7 @@ export async function getConversationHistory(input: GetHistoryInput) {
 
 /* ─── list distinct sessions ─── */
 
-export async function getConversationSessions(userId: string, projectId?: string, limit = 20) {
+export async function getConversationSessions(userId: string, projectId?: string, limit = 20, source?: string) {
   const db = createAdminClient();
 
   let query = db
@@ -327,6 +335,9 @@ export async function getConversationSessions(userId: string, projectId?: string
 
   if (projectId) {
     query = query.eq("project_id", projectId);
+  }
+  if (source) {
+    query = query.eq("source", source);
   }
 
   const { data, error } = await query.limit(500);
@@ -400,7 +411,20 @@ export async function generateConversationMarkdown(input: GetHistoryInput) {
       const time = e.created_at.slice(11, 16);
       const icon = e.type === "tool_call" ? "🔧" : e.type === "milestone" ? "🏁" : "💬";
       const src = e.source !== "mcp" ? ` [${e.source}]` : "";
-      lines.push(`- **${time}** ${icon}${src} ${e.content}`);
+      // Use metadata title if available, otherwise extract first sentence
+      const meta = e.metadata as Record<string, unknown> | null;
+      const metaTitle = typeof meta?.title === "string" ? meta.title : null;
+      const title = metaTitle ?? (() => {
+        const clean = e.content
+          .replace(/```[\s\S]*?```/g, "")
+          .replace(/\n+/g, " ")
+          .trim();
+        const first = clean.split(/[.!?]\s/)[0];
+        return first.length > 200
+          ? first.slice(0, 200) + "..."
+          : first + (first.endsWith(".") ? "" : ".");
+      })();
+      lines.push(`- **${time}** ${icon}${src} ${title}`);
     }
     lines.push("");
   }

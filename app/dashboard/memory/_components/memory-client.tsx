@@ -259,15 +259,16 @@ export function MemoryClient({
               size="sm"
               variant="outline"
               onClick={handleGenerate}
-              disabled={isGenerating}
+              disabled={isGenerating || memories.length >= 30}
               className="gap-1.5 h-7 text-xs"
+              title={memories.length >= 30 ? "Memory limit reached (30). Old memories will be auto-replaced on next generation." : undefined}
             >
               <HugeiconsIcon
                 icon={isGenerating ? Loading03Icon : SparklesIcon}
                 strokeWidth={2}
                 className={`size-3 ${isGenerating ? "animate-spin" : ""}`}
               />
-              {generateStatus ?? "Generate Memories"}
+              {generateStatus ?? (memories.length >= 30 ? `${memories.length}/30 memories` : "Generate Memories")}
             </Button>
           )}
           <Button

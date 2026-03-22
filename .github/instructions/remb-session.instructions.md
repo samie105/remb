@@ -68,8 +68,19 @@ Skipping these causes knowledge loss across sessions. The user expects you to fo
 | Saving knowledge | `context_save` (feature-specific) or `memory_create` (cross-cutting) |
 | After code changes | `scan_trigger` or `diff_analyze` |
 | Finishing work | `conversation_log` with summary |
-| "Do it like in project X" | `cross_project_search` -> `context_bundle` with that project slug |
-| Global coding preference | `memory_create` with no `project_id`, category "preference" |
+| "Do it like in project X" | `cross_project_search` → `context_bundle` with that project slug |
+| Global coding preference | `memory_create` with no `project_id`, category `"preference"` |
+
+## Cross-Project Referencing
+
+When the user says "do it like I did in project X" or references another project:
+
+1. Call `remb__projects_list` to find available projects
+2. Call `remb__cross_project_search` with the concept to find matching patterns across all projects
+3. Call `remb__context_bundle` with the other project's slug to load its full context
+4. Apply the patterns from that project to the current work
+
+**Global preferences** — memories created without a project_id apply to ALL projects. Use `remb__memory_create` with category "preference" and no project_id to save cross-project coding standards.
 
 ## Memory Tiers
 
