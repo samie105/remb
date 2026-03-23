@@ -1713,63 +1713,40 @@ remb init --force              # Re-initialize (overwrites config + REMB.md)
 
 If not logged in, run \`remb login\` first, then \`remb init --force\` to register.
 
-### remb push
-Trigger a cloud scan to update project context after pushing code. Shows live progress with percentage and per-file status in the terminal.
+### remb scan
+Trigger a cloud scan to extract features, code symbols, and architecture from your codebase. Uses a 5-phase AI pipeline (Scout \u2192 Analyze \u2192 Architect \u2192 Review \u2192 Finalize). Shows live progress in the terminal.
 
 \`\`\`sh
-remb push                      # Scan current project (with live progress)
-remb push -p <slug>            # Scan specific project
-remb push --force              # Skip git pre-flight checks
-remb push --no-progress        # Fire and forget (don't wait for results)
+remb scan                      # Cloud scan via GitHub (recommended)
+remb scan --local              # Scan local files (no GitHub needed)
+remb scan --local --path src/  # Scan specific subdirectory locally
+remb scan -p <slug>            # Scan specific project
+remb scan --force              # Skip git pre-flight checks
+remb scan --no-poll            # Fire and forget (don't wait for results)
 \`\`\`
 
-**Pre-flight checks**: Verifies you're in a git repo, warns about uncommitted changes, checks if local is ahead of remote.
+**Pre-flight checks** (cloud scan): Verifies you're in a git repo, warns about uncommitted changes, checks if local is ahead of remote.
 
-**Live progress**: After triggering, polls for scan status and displays a progress bar. During high load, scans queue; the status will show \`queued\` before it turns \`running\`. The CLI waits and shows progress regardless.
+**Local scan** (\`--local\`): Reads files directly from disk, groups them by directory into context entries, and uploads the results. No GitHub access needed \u2014 works for offline repos, monorepos, and any directory structure.
+
+**Live progress**: After triggering, polls for scan status and displays progress. During high load, scans queue; the status shows \`queued\` before \`running\`.
 
 **Returns**: \`started\` | \`already_running\` | \`up_to_date\` | \`queued\`
 
-### remb scan
-**Local scan** \u2014 reads files directly from disk in the CLI process, groups them by directory into context entries, and uploads the results to Remb. No git required, no GitHub access needed. Works offline repos, monorepos, and any directory structure.
-
-> **Local vs cloud**: \`remb scan\` runs entirely on your machine and uploads results immediately. \`remb push\` triggers a server-side scan that reads from GitHub \u2014 it requires committed + pushed changes and a connected GitHub repo.
-
-\`\`\`sh
-remb scan                           # Scan current directory (all subdirs)
-remb scan --path src/               # Scan a specific subdirectory
-remb scan -p <slug> --path src/     # Scan with explicit project slug
-remb scan --depth 3                 # Limit recursion depth (default: 5)
-remb scan --dry-run                 # Preview features without saving
-remb scan --ignore "tests,dist"     # Skip directories by name
-\`\`\`
-
-**What it does**:
-1. Walks the target directory (respecting \`--depth\` and \`--ignore\`)
-2. Groups source files by directory \u2014 each directory becomes one context entry (feature)
-3. Shows a preview: feature name, detected tags, content size in KB
-4. Uploads all entries via \`saveBatch\` with a progress counter
-
-**Preview output** (before saving):
-\`\`\`
-Found 84 source files across 12 directories.
-
-  \u25CF app/api \u2014 typescript, backend \u2014 4.2KB
-  \u25CF components/dashboard \u2014 typescript, react \u2014 11.8KB
-  \u25CF lib \u2014 typescript, utilities \u2014 6.1KB
-  ...
-
-Saving context entries... 8/12
-\u2713 Uploaded 12 context entries to my-app
-\`\`\`
-
-**When to use \`remb scan\` vs \`remb push\`**:
+**When to use cloud vs local**:
 | Scenario | Use |
 |---|---|
-| No git remote / not on GitHub | \`remb scan\` |
-| First-time setup, no commits yet | \`remb scan\` |
-| Monorepo with multiple sub-projects | \`remb scan --path packages/my-pkg\` |
-| After pushing commits to GitHub | \`remb push\` |
-| Want AI-powered per-file analysis | \`remb push\` |
+| Normal workflow (committed code) | \`remb scan\` |
+| No GitHub remote / first setup | \`remb scan --local\` |
+| Monorepo sub-project | \`remb scan --local --path packages/my-pkg\` |
+| GitHub rate-limited or inaccessible | \`remb scan --local\` |
+
+### remb push
+Deprecated alias for \`remb scan\`. Kept for backward compatibility \u2014 use \`remb scan\` instead.
+
+\`\`\`sh
+remb push        # Same as: remb scan
+\`\`\`
 
 ### remb save
 Save a context entry for a feature.
@@ -2786,7 +2763,7 @@ var serveCommand = new Command8("serve").description("Start the MCP server for A
   }
   const server = new McpServer({
     name: "remb",
-    version: "0.2.0"
+    version: "0.3.1"
   });
   server.tool(
     "save_context",
@@ -5477,7 +5454,7 @@ init_skills();
 var program = new Command17();
 program.name("remb").description(
   "Persistent memory layer for AI coding sessions \u2014 save, retrieve, and visualize project context."
-).version("0.2.0", "-v, --version").configureHelp({
+).version("0.3.1", "-v, --version").configureHelp({
   sortSubcommands: true,
   subcommandTerm: (cmd) => chalk19.bold(cmd.name())
 });
