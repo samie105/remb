@@ -51,11 +51,19 @@ type ScanOptions struct {
 	Ignore []string
 }
 
+// ScanOutput is returned by ScanDirectory.
+type ScanOutput struct {
+	Files      []string          // absolute paths of every source file found
+	Results    []ScanResult      // one entry per directory
+	Hashes     map[string]string // repo-relative path -> SHA-256 hex
+	DirForFile map[string]string // repo-relative path -> feature name (dir)
+}
+
 // ScanDirectory scans a directory and produces context entries.
-func ScanDirectory(opts ScanOptions) (files []string, results []ScanResult, err error) {
+func ScanDirectory(opts ScanOptions) (*ScanOutput, error) {
 	root, err := filepath.Abs(opts.Path)
 	if err != nil {
-		return nil, nil, fmt.Errorf("resolve path: %w", err)
+		return nil, fmt.Errorf("resolve path: %w", err)
 	}
 
 	ignoreSet := make(map[string]bool)
@@ -67,6 +75,10 @@ func ScanDirectory(opts ScanOptions) (files []string, results []ScanResult, err 
 	}
 
 	// Group files by their parent directory
+	out := &ScanOutput{
+		Hashes:     make(map[string]string),
+		DirForFile: make(map[string]string),
+	}
 	dirFiles := make(map[string][]string)
 
 	err = filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
@@ -99,17 +111,23 @@ func ScanDirectory(opts ScanOptions) (files []string, results []ScanResult, err 
 			return nil
 		}
 
-		files = append(files, path)
+		out.Files = append(out.Files, path)
 		dir := filepath.Dir(rel)
 		if dir == "." {
 			dir = filepath.Base(root)
 		}
 		dirFiles[dir] = append(dirFiles[dir], rel)
 
+		// Hash the file for manifest tracking
+		if hash, err := HashFile(path); err == nil {
+			out.Hashes[rel] = hash
+			out.DirForFile[rel] = strings.ReplaceAll(dir, string(filepath.Separator), "/")
+		}
+
 		return nil
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("scan directory: %w", err)
+		return nil, fmt.Errorf("scan directory: %w", err)
 	}
 
 	// Build context entries per directory
@@ -139,7 +157,7 @@ func ScanDirectory(opts ScanOptions) (files []string, results []ScanResult, err 
 			tags = append(tags, lang)
 		}
 
-		results = append(results, ScanResult{
+		out.Results = append(out.Results, ScanResult{
 			FeatureName: featureName,
 			Content:     contentBuilder.String(),
 			EntryType:   "scan",
@@ -147,5 +165,5 @@ func ScanDirectory(opts ScanOptions) (files []string, results []ScanResult, err 
 		})
 	}
 
-	return files, results, nil
+	return out, nil
 }

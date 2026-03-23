@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -48,6 +49,7 @@ var scanIgnore string
 var scanDryRun bool
 var scanLocal bool
 var scanNoPoll bool
+var scanForce bool
 
 var scanCmd = &cobra.Command{
 	Use:   "scan",
@@ -72,6 +74,7 @@ func init() {
 	scanCmd.Flags().StringVar(&scanIgnore, "ignore", "", "Comma-separated glob patterns to ignore")
 	scanCmd.Flags().BoolVar(&scanDryRun, "dry-run", false, "Preview what would be scanned without saving")
 	scanCmd.Flags().BoolVar(&scanNoPoll, "no-poll", false, "Trigger scan without waiting for completion")
+	scanCmd.Flags().BoolVar(&scanForce, "force", false, "Skip diff check and re-upload all directories")
 }
 
 func runScan(cmd *cobra.Command, args []string) error {
@@ -282,10 +285,11 @@ func formatDuration(ms int) string {
 	return fmt.Sprintf("%dm", mins)
 }
 
-/* ── Local directory scan (legacy) ──────────────────────────────── */
+/* ── Local directory scan ────────────────────────────────────────── */
 
 func runLocalScan() error {
 	projectSlug := resolveProject(scanProject)
+	root, _ := filepath.Abs(scanPath)
 
 	var ignorePatterns []string
 	if scanIgnore != "" {
@@ -296,9 +300,17 @@ func runLocalScan() error {
 		}
 	}
 
+	// Load the previous manifest to diff against
+	prevManifest, err := scanner.LoadManifest(root)
+	if err != nil {
+		output.Warn(fmt.Sprintf("Could not load scan manifest: %v — performing full scan.", err))
+		prevManifest = &scanner.ScanManifest{Files: make(map[string]string)}
+	}
+	isFirstScan := len(prevManifest.Files) == 0
+
 	stopSpin := startSpinner("Scanning directory...")
 
-	files, results, err := scanner.ScanDirectory(scanner.ScanOptions{
+	scanOut, err := scanner.ScanDirectory(scanner.ScanOptions{
 		Path:   scanPath,
 		Depth:  scanDepth,
 		Ignore: ignorePatterns,
@@ -311,16 +323,64 @@ func runLocalScan() error {
 		os.Exit(1)
 	}
 
-	if len(files) == 0 {
+	if len(scanOut.Files) == 0 {
 		output.Warn("No source files found in the target directory.")
 		return nil
 	}
 
+	// Diff against previous manifest
+	diff := scanner.Diff(prevManifest, scanOut.Hashes, scanOut.DirForFile)
+
 	fmt.Println()
-	output.Info(fmt.Sprintf("Found %s source files across %s directories.",
-		output.Bold(fmt.Sprintf("%d", len(files))),
-		output.Bold(fmt.Sprintf("%d", len(results)))))
+
+	if isFirstScan {
+		output.Info(fmt.Sprintf("First scan — found %s source files across %s directories.",
+			output.Bold(fmt.Sprintf("%d", len(scanOut.Files))),
+			output.Bold(fmt.Sprintf("%d", len(scanOut.Results)))))
+	} else {
+		output.Info(fmt.Sprintf("Found %s source files across %s directories.",
+			output.Bold(fmt.Sprintf("%d", len(scanOut.Files))),
+			output.Bold(fmt.Sprintf("%d", len(scanOut.Results)))))
+
+		if diff.Added+diff.Modified+diff.Deleted == 0 {
+			output.Success("Nothing changed since last scan — everything is up to date.")
+			return nil
+		}
+
+		// Show diff summary
+		parts := []string{}
+		if diff.Added > 0 {
+			parts = append(parts, fmt.Sprintf("%s added", output.Bold(fmt.Sprintf("+%d", diff.Added))))
+		}
+		if diff.Modified > 0 {
+			parts = append(parts, fmt.Sprintf("%s modified", output.Bold(fmt.Sprintf("~%d", diff.Modified))))
+		}
+		if diff.Deleted > 0 {
+			parts = append(parts, fmt.Sprintf("%s deleted", output.Bold(fmt.Sprintf("-%d", diff.Deleted))))
+		}
+		output.Info(fmt.Sprintf("Changes since last scan: %s  →  %s director%s to update",
+			strings.Join(parts, ", "),
+			output.Bold(fmt.Sprintf("%d", len(diff.ChangedDirs))),
+			func() string {
+				if len(diff.ChangedDirs) == 1 {
+					return "y"
+				}
+				return "ies"
+			}()))
+	}
 	fmt.Println()
+
+	// Filter results to only changed directories (unless first scan or --force)
+	results := scanOut.Results
+	if !isFirstScan && !scanForce {
+		filtered := results[:0]
+		for _, r := range results {
+			if diff.ChangedDirs[r.FeatureName] {
+				filtered = append(filtered, r)
+			}
+		}
+		results = filtered
+	}
 
 	for _, r := range results {
 		tags := ""
@@ -332,9 +392,13 @@ func runLocalScan() error {
 				tags += t
 			}
 		}
-		fmt.Printf("  %s %s — %s — %.1fKB\n",
+		changed := ""
+		if !isFirstScan && diff.ChangedDirs[r.FeatureName] {
+			changed = output.Cyan(" (changed)")
+		}
+		fmt.Printf("  %s %s — %s — %.1fKB%s\n",
 			output.Cyan("●"), output.Bold(r.FeatureName), tags,
-			float64(len(r.Content))/1000)
+			float64(len(r.Content))/1000, changed)
 	}
 	fmt.Println()
 
@@ -368,6 +432,11 @@ func runLocalScan() error {
 
 	if err != nil {
 		handleAPIError(err)
+	}
+
+	// Save updated manifest so next scan can diff
+	if manifestErr := scanner.SaveManifest(root, projectSlug, scanOut.Hashes); manifestErr != nil {
+		output.Warn(fmt.Sprintf("Could not save scan manifest: %v", manifestErr))
 	}
 
 	fmt.Println()
