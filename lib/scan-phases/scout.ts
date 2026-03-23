@@ -17,6 +17,7 @@ import {
   parseIgnorePatterns,
 } from "@/lib/github-reader";
 import { extractImports, getInternalImports } from "@/lib/import-parser";
+import { preDefineFeatures } from "@/lib/openai";
 import type { ScanState, PhaseResult } from "@/lib/scan-coordinator";
 import { pushLog, isCancelled, trackFile, recordPhase } from "@/lib/scan-coordinator";
 
@@ -350,6 +351,62 @@ export async function runScoutPhase(state: ScanState): Promise<void> {
       status: "done",
       message: `[SCOUT] Dependency graph: ${state.validFiles.size} files indexed, ${state.importGraph.size} with imports`,
     });
+
+    // ── Pre-define feature taxonomy ──
+    const readmeKey = [...state.contentCache.keys()].find((k) =>
+      /^readme\.md$/i.test(k.split("/").pop() ?? ""),
+    );
+    const pkgKey = [...state.contentCache.keys()].find((k) =>
+      k.endsWith("package.json") && !k.includes("node_modules") && k.split("/").length <= 2,
+    );
+
+    try {
+      const features = await preDefineFeatures(
+        state.repoName,
+        Array.from(state.fileIndex),
+        readmeKey ? state.contentCache.get(readmeKey) : undefined,
+        pkgKey ? state.contentCache.get(pkgKey) : undefined,
+      );
+
+      if (features.length > 0) {
+        state.preDefinedFeatures = features;
+
+        // Upsert features to DB so Analyze phase can match by ID
+        for (const f of features) {
+          const { data: existing } = await db
+            .from("features")
+            .select("id")
+            .eq("project_id", state.projectId)
+            .ilike("name", f.name)
+            .limit(1)
+            .single();
+
+          if (!existing) {
+            await db.from("features").insert({
+              project_id: state.projectId,
+              name: f.name,
+              description: f.description,
+              status: "active",
+            });
+          }
+        }
+
+        await pushLog(state, {
+          timestamp: new Date().toISOString(),
+          file: "",
+          status: "done",
+          message: `[SCOUT] Pre-defined ${features.length} features: ${features.map((f) => f.name).join(", ")}`,
+        });
+      }
+    } catch (e) {
+      // Non-fatal — Analyze will fall back to per-file extraction names
+      await pushLog(state, {
+        timestamp: new Date().toISOString(),
+        file: "",
+        status: "skipped",
+        message: `[SCOUT] Feature pre-definition failed: ${e instanceof Error ? e.message : "unknown error"}`,
+      });
+    }
 
     recordPhase(state, {
       phase: "scout",

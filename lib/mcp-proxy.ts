@@ -1,5 +1,4 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js";
 import type { McpServerRow } from "@/lib/supabase/types";
@@ -55,12 +54,6 @@ function buildTransport(server: McpServerRow) {
         ? (server.custom_headers as Record<string, string>)
         : {};
     Object.assign(headers, custom);
-  }
-
-  if (server.transport === "sse") {
-    return new SSEClientTransport(url, {
-      requestInit: { headers },
-    });
   }
 
   return new StreamableHTTPClientTransport(url, {

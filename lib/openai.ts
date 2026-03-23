@@ -457,6 +457,113 @@ ${featureSummary}`;
   }
 }
 
+/* ─── feature pre-definition (Scout phase) ─── */
+
+const FEATURE_PREDEFINE_PROMPT = `You are a senior developer defining the feature taxonomy for a codebase.
+Given the directory tree, README (if available), and package.json (if available), define the canonical set of product features this codebase contains.
+
+Rules:
+- Features must be real product/system features (e.g. "Authentication", "Dashboard", "Scanning Pipeline", "Design System", "Database Schema").
+- NEVER create features for single utilities, helpers, or library internals.
+- Each feature needs a canonical name, a short description, and likely directory patterns.
+- Aim for 5-20 features depending on codebase size. Small repos may have 3-5.
+- Think about what a product manager or architect would call these areas.
+- Group related files — e.g. all auth-related files (login page, auth middleware, auth API, session management) belong to ONE "Authentication" feature.
+
+Return ONLY valid JSON:
+{
+  "features": [
+    {
+      "name": "Authentication",
+      "description": "User authentication, OAuth flows, session management, and access control",
+      "directory_hints": ["src/auth", "app/auth", "lib/auth", "middleware"],
+      "keywords": ["login", "oauth", "session", "token", "auth"]
+    }
+  ]
+}`;
+
+export interface PreDefinedFeature {
+  name: string;
+  description: string;
+  directory_hints: string[];
+  keywords: string[];
+}
+
+/**
+ * Pre-define the feature taxonomy for a project using directory structure + metadata.
+ * Runs ONCE in the Scout phase (before per-file AI extraction) to prevent
+ * semantic feature name duplication across files.
+ */
+export async function preDefineFeatures(
+  repoName: string,
+  directoryTree: string[],
+  readme?: string,
+  packageJson?: string,
+): Promise<PreDefinedFeature[]> {
+  const openai = getOpenAIClient();
+
+  let input = `Repository: ${repoName}\n\n`;
+  input += `Directory tree (${directoryTree.length} files):\n`;
+
+  // Group by top-level dirs and show representative paths
+  const grouped = new Map<string, string[]>();
+  for (const path of directoryTree) {
+    const dir = path.split("/").slice(0, 2).join("/") || path;
+    const group = grouped.get(dir) ?? [];
+    group.push(path);
+    grouped.set(dir, group);
+  }
+
+  for (const [dir, files] of grouped) {
+    input += `\n${dir}/ (${files.length} files)\n`;
+    for (const f of files.slice(0, 15)) {
+      input += `  ${f}\n`;
+    }
+    if (files.length > 15) input += `  ... and ${files.length - 15} more\n`;
+  }
+
+  if (readme) {
+    const truncReadme = readme.length > 3000 ? readme.slice(0, 3000) + "\n... (truncated)" : readme;
+    input += `\n\nREADME:\n${truncReadme}`;
+  }
+
+  if (packageJson) {
+    const truncPkg = packageJson.length > 2000 ? packageJson.slice(0, 2000) + "\n... (truncated)" : packageJson;
+    input += `\n\npackage.json:\n${truncPkg}`;
+  }
+
+  const truncated = input.length > 20_000 ? input.slice(0, 20_000) + "\n... (truncated)" : input;
+
+  const response = await openai.chat.completions.create({
+    model: process.env.OPENAI_ARCHITECT_MODEL ?? "gpt-4.1",
+    temperature: 0.2,
+    response_format: { type: "json_object" },
+    messages: [
+      { role: "system", content: FEATURE_PREDEFINE_PROMPT },
+      { role: "user", content: truncated },
+    ],
+  });
+
+  const text = response.choices[0]?.message?.content;
+  if (!text) return [];
+
+  try {
+    const parsed = JSON.parse(text) as { features: PreDefinedFeature[] };
+    if (!Array.isArray(parsed.features)) return [];
+
+    return parsed.features
+      .filter((f) => f.name && f.description)
+      .map((f) => ({
+        name: f.name,
+        description: f.description,
+        directory_hints: Array.isArray(f.directory_hints) ? f.directory_hints : [],
+        keywords: Array.isArray(f.keywords) ? f.keywords : [],
+      }));
+  } catch {
+    return [];
+  }
+}
+
 /* ─── architecture analysis (multi-agent Phase 3) ─── */
 
 const ARCHITECTURE_ANALYSIS_PROMPT = `You are a senior software architect analyzing a codebase.
@@ -556,7 +663,9 @@ export async function analyzeArchitecture(
   const truncated = input.length > 25_000 ? input.slice(0, 25_000) + "\n... (truncated)" : input;
 
   const response = await openai.chat.completions.create({
-    model: process.env.OPENAI_EXTRACT_MODEL ?? "gpt-4.1-mini",
+    // Architect phase runs ONCE per scan — use a high-capability model.
+    // Override via OPENAI_ARCHITECT_MODEL env var.
+    model: process.env.OPENAI_ARCHITECT_MODEL ?? "gpt-4.1",
     temperature: 0.2,
     response_format: { type: "json_object" },
     messages: [
@@ -674,7 +783,9 @@ Sample edges (${Math.min(sampleEdges.length, 20)} of ${stats.total_edges}):
 ${sampleEdges.slice(0, 20).map((e) => `- ${e.source} --${e.type}--> ${e.target}`).join("\n")}`;
 
   const response = await openai.chat.completions.create({
-    model: process.env.OPENAI_EXTRACT_MODEL ?? "gpt-4.1-mini",
+    // Review phase runs ONCE per scan — use a high-capability model.
+    // Override via OPENAI_REVIEW_MODEL env var.
+    model: process.env.OPENAI_REVIEW_MODEL ?? "gpt-4.1",
     temperature: 0.1,
     response_format: { type: "json_object" },
     messages: [

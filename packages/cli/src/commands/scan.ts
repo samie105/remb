@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import ora from "ora";
+import { execSync } from "node:child_process";
 import { createApiClient } from "../lib/api-client.js";
 import { scanDirectory } from "../lib/scanner.js";
 import { success, info, warn, error as logError, keyValue } from "../lib/output.js";
@@ -15,6 +16,7 @@ export const scanCommand = new Command("scan")
   .option("--ignore <patterns>", "Comma-separated glob patterns to ignore", "")
   .option("--dry-run", "Preview what would be scanned without saving", false)
   .option("--no-poll", "Trigger scan without waiting for completion", false)
+  .option("--force", "Skip git checks and trigger scan immediately", false)
   .addHelpText(
     "after",
     `
@@ -23,6 +25,7 @@ Examples:
   $ remb scan --local                # Scan local files
   $ remb scan --local --path src     # Scan specific directory
   $ remb scan --no-poll              # Start scan and exit immediately
+  $ remb scan --force                # Skip git pre-flight checks
   $ remb scan --local --dry-run      # Preview without saving`,
   )
   .action(async (opts) => {
@@ -35,9 +38,23 @@ Examples:
 
 /* ── Server-side GitHub scan with live polling ──────────────────── */
 
-async function runServerScan(opts: { project?: string; poll: boolean }) {
+async function runServerScan(opts: { project?: string; poll: boolean; force?: boolean }) {
   const projectSlug = resolveProject(opts.project);
   const client = createApiClient();
+
+  // Pre-flight git checks (skip with --force)
+  if (!opts.force) {
+    const git = checkGitStatus();
+    if (git.ok) {
+      info(
+        `${chalk.dim("Branch:")} ${git.branch}  ` +
+          `${chalk.dim("Latest commit:")} ${git.shortSha} — ${git.commitMessage}`,
+      );
+      if (git.warning) warn(git.warning);
+      console.log();
+    }
+    // Non-fatal — don't block scan if git checks fail
+  }
 
   const spinner = ora(`Checking ${chalk.bold(projectSlug)} for changes...`).start();
 
@@ -281,5 +298,57 @@ async function runLocalScan(opts: {
     spinner.stop();
     handleError(err);
   }
+}
+
+/* ── Git pre-flight checks ──────────────────────────────────────── */
+
+interface GitCheckResult {
+  ok: boolean;
+  branch: string;
+  shortSha: string;
+  commitMessage: string;
+  warning?: string;
+}
+
+function checkGitStatus(): GitCheckResult {
+  try {
+    execSync("git rev-parse --is-inside-work-tree", { stdio: "pipe" });
+  } catch {
+    return { ok: false, branch: "", shortSha: "", commitMessage: "" };
+  }
+
+  let branch: string;
+  try {
+    branch = execSync("git rev-parse --abbrev-ref HEAD", { stdio: "pipe" }).toString().trim();
+  } catch {
+    branch = "unknown";
+  }
+
+  let shortSha: string;
+  let commitMessage: string;
+  try {
+    shortSha = execSync("git rev-parse --short HEAD", { stdio: "pipe" }).toString().trim();
+    commitMessage = execSync("git log -1 --format=%s", { stdio: "pipe" }).toString().trim();
+  } catch {
+    return { ok: false, branch, shortSha: "", commitMessage: "" };
+  }
+
+  let warning: string | undefined;
+  try {
+    const status = execSync("git status --porcelain", { stdio: "pipe" }).toString().trim();
+    if (status) {
+      warning = "You have uncommitted changes. Only pushed commits will be scanned.";
+    }
+  } catch { /* ignore */ }
+
+  try {
+    const localSha = execSync("git rev-parse HEAD", { stdio: "pipe" }).toString().trim();
+    const remoteSha = execSync(`git rev-parse origin/${branch}`, { stdio: "pipe" }).toString().trim();
+    if (localSha !== remoteSha) {
+      warning = `Local branch is ahead of remote. Run ${chalk.bold("git push")} first so the cloud scanner has your latest code.`;
+    }
+  } catch { /* remote may not exist */ }
+
+  return { ok: true, branch, shortSha, commitMessage, warning };
 }
 

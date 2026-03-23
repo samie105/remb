@@ -72,28 +72,7 @@ async function getUserServers(userId: string): Promise<McpServerRow[]> {
   return data ?? [];
 }
 
-/* ─── SSE helper for piggybacking notifications ─── */
 
-function sseResponse(messages: object[]): Response {
-  const encoder = new TextEncoder();
-  const stream = new ReadableStream({
-    start(controller) {
-      for (const msg of messages) {
-        controller.enqueue(
-          encoder.encode(`event: message\ndata: ${JSON.stringify(msg)}\n\n`)
-        );
-      }
-      controller.close();
-    },
-  });
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      ...MCP_HEADERS,
-    },
-  });
-}
 
 /* ─── POST: main MCP message handler ─── */
 
@@ -146,21 +125,17 @@ export async function POST(request: Request) {
 
   const nonNull = responses.filter(Boolean);
 
-  // If tools changed, respond with SSE to piggyback the notification
-  // alongside the normal JSON-RPC response (per MCP Streamable HTTP spec).
-  if (shouldNotifyToolsChanged && nonNull.length > 0) {
-    const bodies = await Promise.all(nonNull.map((r) => r!.json()));
-    return sseResponse([
-      { jsonrpc: "2.0", method: "notifications/tools/list_changed" },
-      ...bodies,
-    ]);
-  }
-
   // Standard responses
   if (nonNull.length === 0) return new NextResponse(null, { status: 202, headers: MCP_HEADERS });
-  if (!Array.isArray(raw)) return nonNull[0]!;
 
   const bodies = await Promise.all(nonNull.map((r) => r!.json()));
+
+  // If the tool list changed, prepend a notification so the client refreshes
+  if (shouldNotifyToolsChanged) {
+    bodies.unshift({ jsonrpc: "2.0", method: "notifications/tools/list_changed" });
+  }
+
+  if (!Array.isArray(raw) && bodies.length === 1) return NextResponse.json(bodies[0], { headers: MCP_HEADERS });
   return NextResponse.json(bodies, { headers: MCP_HEADERS });
 }
 
@@ -366,46 +341,6 @@ async function handleMessage(
     const message = err instanceof Error ? err.message : "Internal error";
     return jsonRpcError(body.id, -32603, message);
   }
-}
-
-/* ─── GET: SSE stream (required by Streamable HTTP spec) ─── */
-
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export async function GET(_request: Request) {
-  // Allow SSE connection without auth — auth is enforced on tool/resource calls
-  // This prevents MCP clients from failing during the initial handshake
-
-  // Return an SSE stream that sends a keep-alive ping periodically
-  // Stateless mode — we don't push server-initiated messages
-  const stream = new ReadableStream({
-    start(controller) {
-      const encoder = new TextEncoder();
-      controller.enqueue(encoder.encode(": connected\n\n"));
-
-      // Keep-alive every 30s
-      const interval = setInterval(() => {
-        try {
-          controller.enqueue(encoder.encode(": ping\n\n"));
-        } catch {
-          clearInterval(interval);
-        }
-      }, 30000);
-
-      // Close after 5 minutes (serverless timeout safety)
-      setTimeout(() => {
-        clearInterval(interval);
-        try { controller.close(); } catch {}
-      }, 300000);
-    },
-  });
-
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-    },
-  });
 }
 
 /* ─── DELETE: close session ─── */

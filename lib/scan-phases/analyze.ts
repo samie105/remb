@@ -140,12 +140,53 @@ export async function runAnalyzePhase(state: ScanState): Promise<void> {
           if (d.includes("framer-motion") || d.includes("framer")) state.techStack.add("Framer Motion");
         }
 
+        // ── Match to pre-defined feature taxonomy ──
+        let resolvedFeatureName = extracted.feature_name;
+
+        if (state.preDefinedFeatures.length > 0) {
+          const lowerName = extracted.feature_name.toLowerCase();
+          const dirParts = filePath.toLowerCase().split("/");
+
+          // 1. Exact name match (case-insensitive)
+          let matched = state.preDefinedFeatures.find(
+            (f) => f.name.toLowerCase() === lowerName,
+          );
+
+          // 2. Keyword match — any keyword appears in the LLM feature name
+          if (!matched) {
+            matched = state.preDefinedFeatures.find((f) =>
+              f.keywords.some((kw) => lowerName.includes(kw.toLowerCase())),
+            );
+          }
+
+          // 3. Directory hint match — file path contains a hint
+          if (!matched) {
+            matched = state.preDefinedFeatures.find((f) =>
+              f.directory_hints.some((hint) =>
+                dirParts.some((part) => part.includes(hint.toLowerCase())),
+              ),
+            );
+          }
+
+          // 4. Substring overlap — pre-defined name words appear in extracted name
+          if (!matched) {
+            matched = state.preDefinedFeatures.find((f) => {
+              const words = f.name.toLowerCase().split(/\s+/);
+              return words.filter((w) => w.length > 3).some((w) => lowerName.includes(w));
+            });
+          }
+
+          if (matched) {
+            resolvedFeatureName = matched.name;
+          }
+        }
+
         // ── Upsert feature ──
         const { data: existingFeature } = await db
           .from("features")
           .select("id")
           .eq("project_id", state.projectId)
-          .ilike("name", extracted.feature_name)
+          .ilike("name", resolvedFeatureName)
           .limit(1)
           .single();
 
@@ -157,7 +198,7 @@ export async function runAnalyzePhase(state: ScanState): Promise<void> {
             .from("features")
             .insert({
               project_id: state.projectId,
-              name: extracted.feature_name,
+              name: resolvedFeatureName,
               description: extracted.summary,
               status: "active",
             })
@@ -215,7 +256,7 @@ export async function runAnalyzePhase(state: ScanState): Promise<void> {
           file_path: filePath,
           file_sha: file.sha,
           scan_job_id: state.scanJobId,
-          feature_name: extracted.feature_name,
+          feature_name: resolvedFeatureName,
           category: extracted.category,
           importance: adjustedImportance,
           tags: extracted.tags,
@@ -376,9 +417,9 @@ export async function runAnalyzePhase(state: ScanState): Promise<void> {
           timestamp: new Date().toISOString(),
           file: filePath,
           status: "done",
-          feature: extracted.feature_name,
+          feature: resolvedFeatureName,
           elapsed_ms: Date.now() - fileStart,
-          message: `[ANALYZE] ${extracted.feature_name}${fanIn > 0 ? ` (fan-in: ${fanIn})` : ""}`,
+          message: `[ANALYZE] ${resolvedFeatureName}${fanIn > 0 ? ` (fan-in: ${fanIn})` : ""}`,
         });
       } catch (e) {
         state.errors++;

@@ -87,6 +87,10 @@ export interface ScanState {
   /** file_path → AI summary (used for import context) */
   summaryMap: Map<string, string>;
 
+  // ── Pre-defined features (set by Scout, consumed by Analyze) ──
+  /** Canonical feature taxonomy from LLM — prevents semantic duplication */
+  preDefinedFeatures: Array<{ name: string; description: string; directory_hints: string[]; keywords: string[] }>;
+
   // ── Phase results ──
   phaseResults: PhaseResult[];
 }
@@ -139,6 +143,7 @@ export function createScanState(
     filesRemaining: 0,
     fileToFeatureId: new Map(),
     summaryMap: new Map(),
+    preDefinedFeatures: [],
     phaseResults: [],
   };
 }
