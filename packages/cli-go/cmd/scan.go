@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -11,6 +12,34 @@ import (
 	"github.com/useremb/remb/internal/output"
 	"github.com/useremb/remb/internal/scanner"
 )
+
+// spinnerFrames cycles through Braille dots to animate a loading indicator.
+var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
+// startSpinner starts an animated spinner with the given label.
+// Call the returned stop() function to halt and clear the line.
+func startSpinner(label string) (stop func()) {
+	var once sync.Once
+	done := make(chan struct{})
+	go func() {
+		for i := 0; ; i++ {
+			select {
+			case <-done:
+				return
+			default:
+				fmt.Printf("\r\033[K%s %s", spinnerFrames[i%len(spinnerFrames)], label)
+				time.Sleep(80 * time.Millisecond)
+			}
+		}
+	}()
+	return func() {
+		once.Do(func() {
+			close(done)
+			time.Sleep(90 * time.Millisecond) // let goroutine exit
+			fmt.Print("\r\033[K")
+		})
+	}
+}
 
 var scanProject string
 var scanPath string
@@ -63,11 +92,11 @@ func runServerScan() error {
 		os.Exit(1)
 	}
 
-	fmt.Printf("⠋ Checking %s for changes...", output.Bold(projectSlug))
+	stopCheckSpin := startSpinner(fmt.Sprintf("Checking %s for changes...", output.Bold(projectSlug)))
 
 	result, err := client.TriggerScan(projectSlug)
 
-	fmt.Print("\r\033[K")
+	stopCheckSpin()
 
 	if err != nil {
 		output.Error(fmt.Sprintf("Failed to start scan: %v", err))
@@ -105,7 +134,8 @@ func runServerScan() error {
 
 func pollScan(client *api.Client, scanID string) error {
 	fmt.Println()
-	fmt.Print("⠋ Initializing...")
+	stopInitSpin := startSpinner("Initializing...")
+	firstPoll := true
 
 	seenFiles := make(map[string]bool)
 	lastFeature := ""
@@ -117,6 +147,12 @@ func pollScan(client *api.Client, scanID string) error {
 			// Network hiccup — retry silently
 			time.Sleep(3 * time.Second)
 			continue
+		}
+
+		// Stop the "Initializing..." spinner on first successful poll
+		if firstPoll {
+			stopInitSpin()
+			firstPoll = false
 		}
 
 		// Show machine/sizing info once
@@ -260,7 +296,7 @@ func runLocalScan() error {
 		}
 	}
 
-	fmt.Print("⠋ Scanning directory...")
+	stopSpin := startSpinner("Scanning directory...")
 
 	files, results, err := scanner.ScanDirectory(scanner.ScanOptions{
 		Path:   scanPath,
@@ -268,7 +304,7 @@ func runLocalScan() error {
 		Ignore: ignorePatterns,
 	})
 
-	fmt.Print("\r\033[K")
+	stopSpin()
 
 	if err != nil {
 		output.Error(fmt.Sprintf("Scan failed: %v", err))
@@ -307,11 +343,11 @@ func runLocalScan() error {
 		return nil
 	}
 
-	fmt.Printf("⠋ Saving %d context entries...", len(results))
+	stopSaveSpin := startSpinner(fmt.Sprintf("Saving %d context entries...", len(results)))
 
 	client, err := api.NewClient()
 	if err != nil {
-		fmt.Print("\r\033[K")
+		stopSaveSpin()
 		output.Error(err.Error())
 		os.Exit(1)
 	}
@@ -328,7 +364,7 @@ func runLocalScan() error {
 
 	saved, err := client.SaveBatch(projectSlug, entries)
 
-	fmt.Print("\r\033[K")
+	stopSaveSpin()
 
 	if err != nil {
 		handleAPIError(err)

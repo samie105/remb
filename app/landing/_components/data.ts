@@ -147,7 +147,7 @@ export const MCP_CAPS: McpCapItem[] = [
   },
   {
     icon: Globe,
-    title: "Remote SSE Server",
+    title: "Remote HTTP Server",
     desc: "Connect via useremb.com \u2014 no local binary needed. Add the URL to your MCP config and your AI has instant access.",
   },
   {
@@ -197,12 +197,12 @@ export const CLI_CMDS: CliCmdItem[] = [
   },
   { cmd: "remb login", desc: "Authenticate via browser OAuth or API key." },
   {
-    cmd: "remb push",
-    desc: "Trigger a cloud scan with live progress after pushing code.",
+    cmd: "remb scan",
+    desc: "Trigger a cloud scan \u2014 checks git status, extracts features, updates context. Recommended over push.",
   },
   {
-    cmd: "remb scan",
-    desc: "Local scan \u2014 reads files from disk, groups by directory, uploads context.",
+    cmd: "remb push",
+    desc: "Deprecated alias for remb scan \u2014 kept for backward compatibility.",
   },
   {
     cmd: "remb save",
@@ -261,15 +261,15 @@ export const QUICK_STEPS: QuickStepItem[] = [
   },
   {
     n: "3",
-    title: "Push",
+    title: "Scan",
     desc: "Trigger a cloud scan to extract features from your codebase.",
-    code: "remb push",
+    code: "remb scan",
   },
   {
     n: "4",
     title: "Connect your AI",
     desc: "Add Remb as an MCP server. Context injection is automatic.",
-    code: '{\n  "mcpServers": {\n    "remb": { "url": "https://mcp.useremb.com/sse" }\n  }\n}',
+    code: '{\n  "mcpServers": {\n    "remb": {\n      "type": "http",\n      "url": "https://www.useremb.com/api/mcp"\n    }\n  }\n}',
   },
 ];
 
@@ -292,9 +292,9 @@ export const HOW_STEPS: HowStepItem[] = [
   {
     num: "02",
     title: "Scan & Remember",
-    desc: "Push your codebase to Remb. It analyzes every file \u2014 features, patterns, dependencies. Save decisions as persistent memories.",
+    desc: "Scan your codebase with Remb. It analyzes every file \u2014 features, patterns, dependencies. Save decisions as persistent memories.",
     lines: [
-      { type: "cmd", text: "remb push" },
+      { type: "cmd", text: "remb scan" },
       { type: "out", text: "\u2714 Scanning 247 files across 12 directories..." },
       { type: "out", text: "\u2714 Extracted 31 features, 5 service boundaries" },
       {
